@@ -6,12 +6,25 @@ plugins {
 android {
     namespace = "com.example.agent"
     compileSdk = 34
+
+    signingConfigs {
+        getByName("debug") {
+            val ks = rootProject.file("debug.keystore")
+            if (ks.exists()) {
+                storeFile = ks
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "com.example.agent"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
+        versionName = "0.2"
         ndk { abiFilters += "arm64-v8a" }
     }
     compileOptions {
