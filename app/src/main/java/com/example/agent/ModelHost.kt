@@ -36,11 +36,16 @@ class ModelHost(private val ctx: Context) {
                 build(Backend.CPU()).also { it.initialize() }
             }
             engine = e
-            conversation = e.createConversation(
+                        conversation = e.createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
-                        "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно."
+                        "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно. " +
+                        "Когда просят что-то сделать на телефоне (будильник, таймер, приложение, звонок, " +
+                        "сообщение, фонарик, громкость, календарь, поиск), обязательно вызови подходящий " +
+                        "инструмент, а потом одной фразой скажи, что сделано. " +
+                        "Текущее время не угадывай, спроси у инструмента get_datetime."
                     ),
+                    tools = listOf(tool(PhoneTools(ctx))),
                     samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
                 )
             )
