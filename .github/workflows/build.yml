@@ -29,16 +29,13 @@ jobs:
         shell: bash
         run: |
           if [ ! -f build.log ]; then
-            echo "::error title=Gradle::build.log not created, failed before Build step"
+            echo "::error title=Gradle::build.log not created"
             exit 0
           fi
-          if grep -q "What went wrong" build.log; then
-            txt=$(grep -A12 "What went wrong" build.log)
-          else
-            txt=$(tail -n 40 build.log)
-          fi
-          msg=$(echo "$txt" | head -c 3500 | sed ':a;N;$!ba;s/\n/%0A/g')
-          echo "::error title=Gradle::$msg"
+          txt=$(grep -nE "^e: |Caused by|OutOfMemory|incompatible|Unresolved|Internal compiler error|metadata|Exception:" build.log | grep -v "org.gradle" | head -25)
+          [ -z "$txt" ] && txt=$(tail -n 40 build.log)
+          msg=$(echo "$txt" | cut -c1-300 | head -c 3500 | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Kotlin::$msg"
       - uses: actions/upload-artifact@v4
         with:
           name: agent-debug-apk
