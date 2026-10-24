@@ -13,17 +13,34 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 8.7
+      - name: Install Gradle 8.7
+        shell: bash
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q gradle-8.7-bin.zip -d "$HOME"
+          echo "$HOME/gradle-8.7/bin" >> "$GITHUB_PATH"
       - name: Build
         shell: bash
-        run: gradle assembleDebug 2>&1 | tee build.log
+        run: gradle assembleDebug --stacktrace > build.log 2>&1
       - name: Show error
         if: failure()
         shell: bash
         run: |
+          if [ ! -f build.log ]; then
+            echo "::error title=Gradle::build.log not created, failed before Build step"
+            exit 0
+          fi
           if grep -q "What went wrong" build.log; then
+            txt=$(grep -A12 "What went wrong" build.log)
+          else
+            txt=$(tail -n 40 build.log)
+          fi
+          msg=$(echo "$txt" | head -c 3500 | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=Gradle::$msg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-debug-apk
+          path: app/build/outputs/apk/debug/*.apk then
             txt=$(grep -A12 "What went wrong" build.log)
           else
             txt=$(tail -n 40 build.log)
