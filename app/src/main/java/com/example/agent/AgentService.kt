@@ -9,15 +9,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.*
 
-/**
- * Держит процесс живым и модель загруженной.
- * START_STICKY + foreground + (опционально) partial wake lock + watchdog от BootReceiver.
- */
 class AgentService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -26,29 +23,74 @@ class AgentService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        val n = notification("Загрузка модели…")
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-        ServiceCompat.startForeground(this, NOTIF_ID, n, type)
+        ServiceCompat.startForeground(this, NOTIF_ID, notification("Запуск…"), type)
 
-        // Wake lock нужен только на время генерации; здесь держим для простоты отладки. Потом сузим.
         wake = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "agent:model").apply { setReferenceCounted(false) }
 
+        scope.launch { loadModelIfPresent() }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_DOWNLOAD) startDownload()
+        return START_STICKY
+    }
+
+    private suspend fun loadModelIfPresent() {
+        val host = AgentRuntime.host(this)
+        if (!host.modelFile.exists()) {
+            status("Модели нет. Нажмите «Скачать модель».")
+            return
+        }
+        status("Загружаю модель…")
+        status("Модель: " + runCatching { host.init() }.getOrElse { "ошибка: ${it.message}" })
+    }
+
+    private fun startDownload() {
+        if (DownloadState.running) return
+        val host = AgentRuntime.host(this)
+        if (host.modelFile.exists()) { status("Модель уже скачана."); return }
+        DownloadState.running = true
+        wake?.acquire(3 * 60 * 60 * 1000L)
         scope.launch {
-            val msg = runCatching { AgentRuntime.host(this@AgentService).init() }
-                .getOrElse { "Ошибка: ${it.message}" }
-            getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification("Модель: $msg"))
+            try {
+                var last = 0L
+                val part = Downloader.download(host.modelFile) { done, total ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - last > 1000 && total > 0) {
+                        last = now
+                        status("Скачивание: ${done / 1048576} из ${total / 1048576} МБ (${done * 100 / total}%)")
+                    }
+                }
+                status("Проверяю файл…")
+                if (!Downloader.sha256Ok(part)) {
+                    part.delete()
+                    status("Файл повреждён. Нажмите «Скачать модель» ещё раз.")
+                    return@launch
+                }
+                part.renameTo(host.modelFile)
+                status("Загружаю модель…")
+                status("Модель: " + host.init())
+            } catch (t: Throwable) {
+                status("Ошибка скачивания: ${t.message}. Нажмите «Скачать» для докачки.")
+            } finally {
+                DownloadState.running = false
+                wake?.takeIf { it.isHeld }?.release()
+            }
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = START_STICKY
+    private fun status(t: String) {
+        DownloadState.text.value = t
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(t))
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Смахнули из «недавних» — просим систему перезапустить сервис.
         val pi = PendingIntent.getService(this, 1, Intent(this, AgentService::class.java),
             PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE)
         (getSystemService(ALARM_SERVICE) as AlarmManager)
-            .set(AlarmManager.ELAPSED_REALTIME, android.os.SystemClock.elapsedRealtime() + 2000, pi)
+            .set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + 2000, pi)
         super.onTaskRemoved(rootIntent)
     }
 
@@ -71,17 +113,20 @@ class AgentService : Service() {
         .setContentTitle("Агент работает")
         .setContentText(text)
         .setOngoing(true)
+        .setOnlyAlertOnce(true)
         .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE))
         .build()
 
     companion object {
         const val CHANNEL = "agent"; const val NOTIF_ID = 1
-        fun start(ctx: Context) {
-            val i = Intent(ctx, AgentService::class.java)
+        const val ACTION_DOWNLOAD = "com.example.agent.DOWNLOAD"
+
+        fun start(ctx: Context, action: String? = null) {
+            val i = Intent(ctx, AgentService::class.java).setAction(action)
             if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
-        /** Исключение из экономии батареи. Откроет системный диалог. */
+
         fun requestIgnoreBattery(ctx: Context) {
             val pm = ctx.getSystemService(PowerManager::class.java)
             if (!pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
@@ -92,7 +137,6 @@ class AgentService : Service() {
     }
 }
 
-/** После перезагрузки поднимаем сервис. (Сервис типа specialUse из BOOT_COMPLETED разрешён.) */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
         if (i.action == Intent.ACTION_BOOT_COMPLETED) AgentService.start(c)
