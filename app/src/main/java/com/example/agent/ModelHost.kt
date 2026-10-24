@@ -36,7 +36,7 @@ class ModelHost(private val ctx: Context) {
                 build(Backend.CPU()).also { it.initialize() }
             }
             engine = e
-                        conversation = e.createConversation(
+            conversation = e.createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
                         "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно. " +
