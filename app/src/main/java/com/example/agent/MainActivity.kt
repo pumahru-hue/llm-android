@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         lifecycleScope.launch { DownloadState.text.collect { status.text = it } }
+        lifecycleScope.launch { ToolLog.events.collect { log.append("$it\n") } }
 
         val need = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) need += Manifest.permission.POST_NOTIFICATIONS
