@@ -40,14 +40,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: agent-debug-apk
-          path: app/build/outputs/apk/debug/*.apk then
-            txt=$(grep -A12 "What went wrong" build.log)
-          else
-            txt=$(tail -n 40 build.log)
-          fi
-          msg=$(echo "$txt" | head -c 3500 | sed ':a;N;$!ba;s/\n/%0A/g')
-          echo "::error title=Gradle::$msg"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: agent-debug-apk
           path: app/build/outputs/apk/debug/*.apk
