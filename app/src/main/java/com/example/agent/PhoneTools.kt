@@ -29,7 +29,7 @@ object ToolLog {
 
 class PhoneTools(private val ctx: Context) : ToolSet {
 
-    private fun log(s: String) { ToolLog.events.tryEmit("🔧 $s") }
+    private fun log(s: String) { ToolLog.events.tryEmit("\n🔧 $s\n") }
 
     private fun launch(i: Intent): Map<String, Any> = try {
         ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -38,14 +38,10 @@ class PhoneTools(private val ctx: Context) : ToolSet {
         mapOf("status" to "error", "message" to (e.message ?: "не удалось"))
     }
 
-    @Tool(description = "Get the current local date, time and weekday.")
+    @Tool(description = "Get the current local date, time and weekday. Tell the user the 'text' field as is.")
     fun getDatetime(): Map<String, Any> {
         log("get_datetime")
-        val now = ZonedDateTime.now(ZoneId.systemDefault())
-        return mapOf(
-            "iso" to now.toLocalDateTime().toString(),
-            "weekday" to now.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("ru")),
-        )
+        return mapOf("text" to nowRu())
     }
 
     @Tool(description = "Get the phone battery level in percent and whether it is charging.")
