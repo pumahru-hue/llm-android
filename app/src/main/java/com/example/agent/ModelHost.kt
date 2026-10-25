@@ -1,112 +1,91 @@
 package com.example.agent
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Bundle
-import android.widget.*
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
+import android.content.Context
+import android.util.Log
+import com.google.ai.edge.litertlm.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
 
-class MainActivity : AppCompatActivity() {
+/** Держит Engine и Conversation. Один экземпляр на процесс. */
+class ModelHost(private val ctx: Context) {
 
-    private val recorder = Recorder()
-    private lateinit var speaker: Speaker
-    private lateinit var log: TextView
-    private lateinit var status: TextView
-    private lateinit var talk: Button
-    private lateinit var listen: Button
-    private lateinit var nameEdit: EditText
-    private var recording = false
+    private val mutex = Mutex()
+    private var engine: Engine? = null
+    private var conversation: Conversation? = null
 
-    private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        AgentService.start(this)
-    }
+    val modelFile: File get() = File(ctx.getExternalFilesDir(null), "gemma-4-E2B-it.litertlm")
 
-    override fun onCreate(s: Bundle?) {
-        super.onCreate(s)
-        speaker = Speaker(this)
-        val prefs = getSharedPreferences("agent", MODE_PRIVATE)
+    val isReady get() = conversation != null
 
-        status = TextView(this).apply { textSize = 14f; setPadding(32, 24, 32, 8) }
-        log = TextView(this).apply { textSize = 16f; setPadding(32, 32, 32, 32) }
-        talk = Button(this).apply { text = "🎤 Говорить"; setOnClickListener { toggle() } }
-        val download = Button(this).apply {
-            text = "Скачать модель (2,6 ГБ, лучше по Wi-Fi)"
-            setOnClickListener { AgentService.start(this@MainActivity, AgentService.ACTION_DOWNLOAD) }
-        }
-        val battery = Button(this).apply {
-            text = "Отключить экономию батареи"
-            setOnClickListener { AgentService.requestIgnoreBattery(this@MainActivity) }
-        }
-        nameEdit = EditText(this).apply {
-            hint = "Имя ассистента (например: Джарвис)"
-            setText(prefs.getString("wake_name", ""))
-            setSingleLine()
-        }
-        listen = Button(this).apply { setOnClickListener { toggleListen() } }
+    suspend fun init(): String = mutex.withLock {
+        if (conversation != null) return@withLock "уже загружена"
+        require(modelFile.exists()) { "Нет файла модели: ${modelFile.path}" }
 
-        setContentView(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(status); addView(download); addView(nameEdit); addView(listen)
-            addView(talk); addView(battery)
-            addView(ScrollView(context).apply { addView(log) }, LinearLayout.LayoutParams(-1, 0, 1f))
-        })
-
-        lifecycleScope.launch { DownloadState.text.collect { status.text = it } }
-        lifecycleScope.launch { ToolLog.events.collect { log.append(it) } }
-        lifecycleScope.launch {
-            ListenState.on.collect { on ->
-                listen.text = if (on) "⏹ Выключить прослушивание" else "👂 Включить прослушивание по имени"
-                talk.isEnabled = !on
+        withContext(Dispatchers.Default) {
+            val e = try {
+                build(Backend.GPU()).also { it.initialize() }
+            } catch (t: Throwable) {
+                Log.w(TAG, "GPU не взлетел, CPU: $t")
+                build(Backend.CPU()).also { it.initialize() }
             }
+            engine = e
+            conversation = e.createConversation(
+                ConversationConfig(
+                    systemInstruction = Contents.of(
+                        "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно. " +
+                        "Когда просят что-то сделать на телефоне (будильник, таймер, приложение, звонок, " +
+                        "сообщение, фонарик, громкость, календарь, поиск), обязательно вызови подходящий " +
+                        "инструмент, а потом одной фразой скажи, что сделано. " +
+                        "Текущее время не угадывай, спроси у инструмента get_datetime."
+                    ),
+                    tools = listOf(tool(PhoneTools(ctx))),
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                )
+            )
         }
-
-        val need = mutableListOf(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) need += Manifest.permission.POST_NOTIFICATIONS
-        perms.launch(need.toTypedArray())
+        "готово"
     }
 
-    private fun toggleListen() {
-        if (ListenState.on.value) { ListenService.stop(this); return }
+    private fun build(main: Backend) = Engine(
+        EngineConfig(
+            modelPath = modelFile.path,
+            backend = main,
+            visionBackend = Backend.GPU(),
+            audioBackend = Backend.CPU(),
+            cacheDir = ctx.cacheDir.path,
+        )
+    )
 
-        val name = nameEdit.text.toString().trim()
-        if (name.isEmpty()) { Toast.makeText(this, "Сначала впишите имя", Toast.LENGTH_SHORT).show(); return }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "Нужно разрешение на микрофон", Toast.LENGTH_SHORT).show(); return
-        }
-        if (!AgentRuntime.host(this).isReady) {
-            Toast.makeText(this, "Модель ещё не загружена", Toast.LENGTH_SHORT).show(); return
-        }
-        getSharedPreferences("agent", MODE_PRIVATE).edit().putString("wake_name", name).apply()
-        ListenService.start(this)
+    /** Голос -> текст ответа потоком. */
+    fun askWithAudio(
+        pcm: ByteArray,
+        hint: String = "Сейчас ${nowRu()}. Ответь на то, что сказал пользователь.",
+    ): Flow<String> =
+        stream(Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint)))
+
+    fun askText(text: String): Flow<String> = stream(Contents.of(Content.Text(text)))
+
+    private fun stream(c: Contents): Flow<String> {
+        val conv = checkNotNull(conversation) { "Модель не инициализирована" }
+        return conv.sendMessageAsync(c).map { it.toString() }
     }
 
-    private fun toggle() {
-        val host = AgentRuntime.host(this)
-        if (!host.isReady) { log.append("\nМодель ещё не загружена, смотрите статус сверху.\n"); return }
-
-        if (!recording) {
-            speaker.stop()
-            recorder.start(lifecycleScope)
-            recording = true; talk.text = "⏹ Стоп"
-        } else {
-            recording = false; talk.text = "🎤 Говорить"
-            lifecycleScope.launch {
-                val pcm = recorder.stop()
-                log.append("\n[аудио ${pcm.size / 32000.0} с]\nАгент: ")
-                host.askWithAudio(pcm)
-                    .catch { log.append("\n[ошибка: ${it.message}]") }
-                    .collect { chunk -> log.append(chunk); speaker.feed(chunk) }
-                speaker.flush()
-            }
-        }
+    fun close() {
+        conversation?.close(); engine?.close()
+        conversation = null; engine = null
     }
 
-    override fun onDestroy() { speaker.shutdown(); super.onDestroy() }
+    companion object { const val TAG = "ModelHost" }
+}
+
+/** Синглтон процесса: сервисы и UI используют один и тот же движок. */
+object AgentRuntime {
+    @Volatile private var host: ModelHost? = null
+    fun host(ctx: Context): ModelHost =
+        host ?: synchronized(this) { host ?: ModelHost(ctx.applicationContext).also { host = it } }
 }
