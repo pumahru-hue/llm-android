@@ -127,7 +127,7 @@ class ListenService : Service() {
         status("Слушаю. Имя: «${wakeName()}»")
         ToolLog.events.tryEmit("\n👂 Слушаю. Имя: «${wakeName()}»\n")
         try {
-            while (isActive) {
+            while (currentCoroutineContext().isActive) {
                 val n = ar.read(chunk, 0, chunk.size)
                 if (n < 0) { delay(100); continue }
                 if (n == 0 || busy) continue
