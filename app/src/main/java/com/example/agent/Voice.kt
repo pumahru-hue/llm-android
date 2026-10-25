@@ -68,5 +68,6 @@ class Speaker(ctx: Context) {
     }
 
     fun stop() = tts.stop()
+    fun isSpeaking(): Boolean = ready && tts.isSpeaking
     fun shutdown() { tts.stop(); tts.shutdown() }
 }
