@@ -64,8 +64,8 @@ class ModelHost(private val ctx: Context) {
     )
 
     /** Голос -> текст ответа потоком. pcm: 16 kHz, mono, 16-bit (формат уточнить, см. README). */
-    fun askWithAudio(pcm: ByteArray, hint: String = "Ответь на то, что сказал пользователь."): Flow<String> =
-                stream(Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint)))
+    fun askWithAudio(pcm: ByteArray, hint: String = "Сейчас ${nowRu()}. Ответь на то, что сказал пользователь."): Flow<String> =
+                   
 
     fun askText(text: String): Flow<String> = stream(Contents.of(Content.Text(text)))
 
