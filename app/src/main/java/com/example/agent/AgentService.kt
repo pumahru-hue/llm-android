@@ -22,9 +22,11 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
+        Notifs.ensureChannel(this)
+        Notifs.agentAlive = true
+        Notifs.model = "Запуск…"
         val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0
-        ServiceCompat.startForeground(this, NOTIF_ID, notification("Запуск…"), type)
+        ServiceCompat.startForeground(this, Notifs.ID, Notifs.build(this), type)
 
         wake = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "agent:model").apply { setReferenceCounted(false) }
@@ -83,7 +85,8 @@ class AgentService : Service() {
 
     private fun status(t: String) {
         DownloadState.text.value = t
-        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(t))
+        Notifs.model = t
+        Notifs.post(this)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -96,6 +99,7 @@ class AgentService : Service() {
 
     override fun onDestroy() {
         scope.cancel(); wake?.takeIf { it.isHeld }?.release()
+        Notifs.agentAlive = false
         super.onDestroy()
     }
 
