@@ -22,6 +22,7 @@ class ModelHost(private val ctx: Context) {
     private var conversation: Conversation? = null
     private var turns = 0
     private var lastUse = 0L
+    private var dirty = false   // в диалоге есть картинки (тяжёлый контекст)
 
     val modelFile: File get() = File(ctx.getExternalFilesDir(null), "gemma-4-E2B-it.litertlm")
 
@@ -41,6 +42,7 @@ class ModelHost(private val ctx: Context) {
             engine = e
             conversation = createConv(e)
             turns = 0
+            dirty = false
             lastUse = SystemClock.elapsedRealtime()
         }
         "готово"
@@ -70,19 +72,22 @@ class ModelHost(private val ctx: Context) {
         )
     )
 
-    /** Берёт текущий диалог или создаёт новый, если он устарел или переполнен. */
-    private suspend fun obtainConversation(): Conversation = mutex.withLock {
+    /** Текущий диалог или новый, если старый устарел, переполнен или нужен чистый (медиа). */
+    private suspend fun obtainConversation(fresh: Boolean): Conversation = mutex.withLock {
         val e = checkNotNull(engine) { "Модель не инициализирована" }
         val now = SystemClock.elapsedRealtime()
-        val stale = conversation != null && (turns >= MAX_TURNS || now - lastUse > IDLE_MS)
+        val stale = conversation != null &&
+            (fresh || dirty || turns >= MAX_TURNS || now - lastUse > IDLE_MS)
         if (stale) {
             runCatching { conversation?.close() }
             conversation = null
             turns = 0
+            dirty = false
         }
         val c = conversation ?: withContext(Dispatchers.Default) { createConv(e) }.also { conversation = it }
         turns++
         lastUse = now
+        dirty = fresh
         c
     }
 
@@ -90,6 +95,7 @@ class ModelHost(private val ctx: Context) {
         runCatching { conversation?.close() }
         conversation = null
         turns = 0
+        dirty = false
     }
 
     /** Голос -> текст ответа потоком. */
@@ -97,15 +103,18 @@ class ModelHost(private val ctx: Context) {
         pcm: ByteArray,
         hint: String = "Сейчас ${nowRu()}. Ответь на то, что сказал пользователь.",
     ): Flow<String> =
-        stream(Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint)))
+        stream(Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint)), fresh = false)
 
-    fun askText(text: String): Flow<String> = stream(Contents.of(Content.Text(text)))
+    /** Картинки/кадры + вопрос. Всегда в новом диалоге. */
+    fun askMedia(parts: List<Content>): Flow<String> =
+        stream(Contents.of(*parts.toTypedArray()), fresh = true)
 
-    /** При ошибке до первого символа ответа: сбрасываем диалог и пробуем один раз заново. */
-    private fun stream(c: Contents): Flow<String> = flow {
+    fun askText(text: String): Flow<String> = stream(Contents.of(Content.Text(text)), fresh = false)
+
+    private fun stream(c: Contents, fresh: Boolean): Flow<String> = flow {
         var attempt = 0
         while (true) {
-            val conv = obtainConversation()
+            val conv = obtainConversation(fresh)
             var emitted = false
             try {
                 conv.sendMessageAsync(c).collect { emitted = true; emit(it.toString()) }
@@ -128,8 +137,8 @@ class ModelHost(private val ctx: Context) {
 
     companion object {
         const val TAG = "ModelHost"
-        const val MAX_TURNS = 3                 // реплик в одном диалоге
-        const val IDLE_MS = 2 * 60 * 1000L      // пауза, после которой начинаем заново
+        const val MAX_TURNS = 3
+        const val IDLE_MS = 2 * 60 * 1000L
     }
 }
 
