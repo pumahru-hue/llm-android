@@ -156,6 +156,7 @@ class ListenService : Service() {
                     if (text.isBlank()) continue
 
                     ToolLog.events.tryEmit("\n👂 слышу: $text\n")
+                    status("Слышал: ${text.take(60)}")
                     val words = norm(text).split(" ").filter { it.isNotEmpty() }
                     val nameWords = norm(wakeName()).split(" ").filter { it.isNotEmpty() }
                     val idx = findName(words, nameWords)
@@ -205,6 +206,7 @@ class ListenService : Service() {
                     .catch { ToolLog.events.tryEmit("\n[ошибка: ${it.message}]\n") }
                     .collect { c -> ToolLog.events.tryEmit(c); sp.feed(c) }
                 sp.flush()
+                status("Говорю…")
                 delay(400)
                 var t = 0
                 while (sp.isSpeaking() && t < 600) { delay(200); t++ }   // до 2 минут
@@ -269,15 +271,24 @@ class ListenService : Service() {
         }
     }
 
-    private fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL)
-        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-        .setContentTitle("Слушаю по имени")
-        .setContentText(text)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE))
-        .build()
+    private fun notification(text: String): Notification {
+        val stop = PendingIntent.getService(
+            this, 2,
+            Intent(this, ListenService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("Слушаю по имени «${wakeName()}»")
+            .setContentText(text)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .addAction(android.R.drawable.ic_media_pause, "Остановить", stop)
+            .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE))
+            .build()
+    }
 
     override fun onBind(i: Intent?): IBinder? = null
 
