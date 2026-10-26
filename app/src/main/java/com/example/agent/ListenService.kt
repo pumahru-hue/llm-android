@@ -53,10 +53,11 @@ class ListenService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createChannel()
+        Notifs.ensureChannel(this)
         try {
             val type = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0
-            ServiceCompat.startForeground(this, NOTIF_ID, notification("Подготовка…"), type)
+            Notifs.listen = "Подготовка…"
+            ServiceCompat.startForeground(this, Notifs.ID, Notifs.build(this), type)
         } catch (t: Throwable) {
             ToolLog.events.tryEmit("\n[не удалось запустить прослушивание: ${t.message}]\n")
             stopSelf()
@@ -261,7 +262,8 @@ class ListenService : Service() {
     }
 
     private fun status(t: String) {
-        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(t))
+        Notifs.listen = t
+        Notifs.post(this)
     }
 
     private fun createChannel() {
@@ -298,6 +300,8 @@ class ListenService : Service() {
         speaker?.shutdown()
         wake?.takeIf { it.isHeld }?.release()
         ListenState.on.value = false
+        Notifs.listen = ""
+        Notifs.repostLater(this)
         super.onDestroy()
     }
 
