@@ -123,6 +123,7 @@ class ListenService : Service() {
         var speechActive = false
         var awaiting = false
         var deadline = 0L
+        var muted = false
 
         ar.startRecording()
         status("Слушаю. Имя: «${wakeName()}»")
@@ -132,6 +133,12 @@ class ListenService : Service() {
                 val n = ar.read(chunk, 0, chunk.size)
                 if (n < 0) { delay(100); continue }
                 if (n == 0 || busy) continue
+                if (Speaker.isBusy()) { muted = true; continue }
+                if (muted) {
+                    muted = false
+                    rec.close(); rec = Recognizer(model, rate.toFloat())
+                    utt.reset(); speechActive = false
+                }
                 if (needReset) {
                     needReset = false
                     rec.close(); rec = Recognizer(model, rate.toFloat())
