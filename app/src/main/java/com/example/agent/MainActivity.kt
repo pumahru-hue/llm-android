@@ -3,6 +3,7 @@ package com.example.agent
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -24,8 +25,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var speaker: Speaker
     private lateinit var log: TextView
     private lateinit var status: TextView
-    private lateinit var talk: Button
-    private lateinit var listen: Button
+    private lateinit var listenBtn: ImageButton
+    private lateinit var talkBtn: ImageButton
     private lateinit var nameEdit: EditText
     private lateinit var askEdit: EditText
     private lateinit var preview: ImageView
@@ -45,14 +46,29 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) askAboutMedia(uri)
     }
 
+    private fun rounded(color: Int) = GradientDrawable().apply { cornerRadius = 28f; setColor(color) }
+
+    private fun iconButton(res: Int, desc: String, onClick: () -> Unit) = ImageButton(this).apply {
+        setImageResource(res)
+        setColorFilter(0xFFFFFFFF.toInt())
+        contentDescription = desc
+        scaleType = ImageView.ScaleType.CENTER_INSIDE
+        setPadding(24, 24, 24, 24)
+        background = rounded(GRAY)
+        setOnClickListener { onClick() }
+    }
+
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         speaker = Speaker(this)
         val prefs = getSharedPreferences("agent", MODE_PRIVATE)
+        val dp = resources.displayMetrics.density
 
         status = TextView(this).apply { textSize = 14f; setPadding(32, 24, 32, 8) }
-        log = TextView(this).apply { textSize = 16f; setPadding(32, 32, 32, 32) }
-        talk = Button(this).apply { text = "🎤 Говорить"; setOnClickListener { toggle() } }
+        log = TextView(this).apply {
+            textSize = 16f; setPadding(32, 32, 32, 32)
+            setOnLongClickListener { text = ""; true }       // долгое нажатие очищает экран
+        }
         val download = Button(this).apply {
             text = "Скачать модель (2,6 ГБ, лучше по Wi-Fi)"
             setOnClickListener { AgentService.start(this@MainActivity, AgentService.ACTION_DOWNLOAD) }
@@ -66,7 +82,25 @@ class MainActivity : AppCompatActivity() {
             setText(prefs.getString("wake_name", ""))
             setSingleLine()
         }
-        listen = Button(this).apply { setOnClickListener { toggleListen() } }
+
+        // три иконки в одну строку: слушать, говорить, сбросить диалог
+        listenBtn = iconButton(R.drawable.ic_listen, "Прослушивание по имени") { toggleListen() }
+        talkBtn = iconButton(R.drawable.ic_mic, "Говорить") { toggle() }
+        val resetBtn = iconButton(R.drawable.ic_reset, "Сбросить диалог") {
+            lifecycleScope.launch {
+                speaker.stop()
+                AgentRuntime.host(this@MainActivity).reset()
+                log.append("\n— диалог очищен —\n")
+                Toast.makeText(this@MainActivity, "Контекст сброшен", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val iconH = (56 * dp).toInt()
+        val iconRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            for (b in listOf(listenBtn, talkBtn, resetBtn)) {
+                addView(b, LinearLayout.LayoutParams(0, iconH, 1f).apply { setMargins(8, 8, 8, 8) })
+            }
+        }
 
         askEdit = EditText(this).apply {
             hint = "Вопрос к фото или видео"
@@ -86,13 +120,13 @@ class MainActivity : AppCompatActivity() {
             adjustViewBounds = true
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        val previewHeight = (160 * resources.displayMetrics.density).toInt()
 
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(status); addView(download); addView(nameEdit); addView(listen)
-            addView(talk); addView(askEdit); addView(mediaRow)
-            addView(preview, LinearLayout.LayoutParams(-1, previewHeight))
+            addView(status); addView(download); addView(nameEdit)
+            addView(iconRow)
+            addView(askEdit); addView(mediaRow)
+            addView(preview, LinearLayout.LayoutParams(-1, (160 * dp).toInt()))
             addView(battery)
             addView(ScrollView(context).apply { addView(log) }, LinearLayout.LayoutParams(-1, 0, 1f))
         })
@@ -101,8 +135,9 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch { ToolLog.events.collect { log.append(it) } }
         lifecycleScope.launch {
             ListenState.on.collect { on ->
-                listen.text = if (on) "⏹ Выключить прослушивание" else "👂 Включить прослушивание по имени"
-                talk.isEnabled = !on
+                listenBtn.background = rounded(if (on) GREEN else GRAY)
+                talkBtn.isEnabled = !on
+                talkBtn.alpha = if (on) 0.35f else 1f
             }
         }
 
@@ -120,13 +155,8 @@ class MainActivity : AppCompatActivity() {
         return FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
     }
 
-    private fun shootPhoto() {
-        val u = captureUri("jpg"); pendingUri = u; takePhoto.launch(u)
-    }
-
-    private fun shootVideo() {
-        val u = captureUri("mp4"); pendingUri = u; takeVideo.launch(u)
-    }
+    private fun shootPhoto() { val u = captureUri("jpg"); pendingUri = u; takePhoto.launch(u) }
+    private fun shootVideo() { val u = captureUri("mp4"); pendingUri = u; takeVideo.launch(u) }
 
     private fun askAboutMedia(uri: Uri) {
         val host = AgentRuntime.host(this)
@@ -176,9 +206,11 @@ class MainActivity : AppCompatActivity() {
         if (!recording) {
             speaker.stop()
             recorder.start(lifecycleScope)
-            recording = true; talk.text = "⏹ Стоп"
+            recording = true
+            talkBtn.background = rounded(RED)
         } else {
-            recording = false; talk.text = "🎤 Говорить"
+            recording = false
+            talkBtn.background = rounded(GRAY)
             lifecycleScope.launch {
                 val pcm = recorder.stop()
                 log.append("\n[аудио ${pcm.size / 32000.0} с]\nАгент: ")
@@ -191,4 +223,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() { speaker.shutdown(); super.onDestroy() }
+
+    companion object {
+        const val GRAY = 0xFF424242.toInt()
+        const val GREEN = 0xFF2E7D32.toInt()
+        const val RED = 0xFFC62828.toInt()
+    }
 }
