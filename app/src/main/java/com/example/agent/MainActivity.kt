@@ -2,15 +2,21 @@ package com.example.agent
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -21,10 +27,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var talk: Button
     private lateinit var listen: Button
     private lateinit var nameEdit: EditText
+    private lateinit var askEdit: EditText
+    private lateinit var preview: ImageView
     private var recording = false
+    private var pendingUri: Uri? = null
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         AgentService.start(this)
+    }
+    private val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        if (ok) pendingUri?.let { askAboutMedia(it) }
+    }
+    private val takeVideo = registerForActivityResult(ActivityResultContracts.CaptureVideo()) { ok ->
+        if (ok) pendingUri?.let { askAboutMedia(it) }
+    }
+    private val pickMedia = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) askAboutMedia(uri)
     }
 
     override fun onCreate(s: Bundle?) {
@@ -50,10 +68,32 @@ class MainActivity : AppCompatActivity() {
         }
         listen = Button(this).apply { setOnClickListener { toggleListen() } }
 
+        askEdit = EditText(this).apply {
+            hint = "Вопрос к фото или видео"
+            setText(prefs.getString("media_q", "Что на этом снимке? Опиши коротко."))
+        }
+        val mediaRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            fun b(t: String, f: () -> Unit) = Button(context).apply {
+                text = t; setOnClickListener { f() }
+            }
+            addView(b("📷 Фото") { shootPhoto() }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(b("🎞 Видео") { shootVideo() }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(b("🖼 Галерея") { pickMedia.launch(arrayOf("image/*", "video/*")) },
+                LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        preview = ImageView(this).apply {
+            adjustViewBounds = true
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        val previewHeight = (160 * resources.displayMetrics.density).toInt()
+
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(status); addView(download); addView(nameEdit); addView(listen)
-            addView(talk); addView(battery)
+            addView(talk); addView(askEdit); addView(mediaRow)
+            addView(preview, LinearLayout.LayoutParams(-1, previewHeight))
+            addView(battery)
             addView(ScrollView(context).apply { addView(log) }, LinearLayout.LayoutParams(-1, 0, 1f))
         })
 
@@ -70,6 +110,48 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= 33) need += Manifest.permission.POST_NOTIFICATIONS
         perms.launch(need.toTypedArray())
     }
+
+    // ---------- камера и медиа ----------
+
+    private fun captureUri(ext: String): Uri {
+        val dir = File(cacheDir, "capture").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val f = File(dir, "cap_${System.currentTimeMillis()}.$ext")
+        return FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
+    }
+
+    private fun shootPhoto() {
+        val u = captureUri("jpg"); pendingUri = u; takePhoto.launch(u)
+    }
+
+    private fun shootVideo() {
+        val u = captureUri("mp4"); pendingUri = u; takeVideo.launch(u)
+    }
+
+    private fun askAboutMedia(uri: Uri) {
+        val host = AgentRuntime.host(this)
+        if (!host.isReady) { log.append("\nМодель ещё не загружена, смотрите статус сверху.\n"); return }
+        val question = askEdit.text.toString()
+        getSharedPreferences("agent", MODE_PRIVATE).edit().putString("media_q", question).apply()
+        speaker.stop()
+
+        lifecycleScope.launch {
+            val kind = contentResolver.getType(uri) ?: "?"
+            log.append("\n[медиа: $kind] $question\nАгент: ")
+            try {
+                val prep = withContext(Dispatchers.Default) { MediaUtil.prepare(this@MainActivity, uri, question) }
+                preview.setImageBitmap(BitmapFactory.decodeByteArray(prep.preview, 0, prep.preview.size))
+                host.askMedia(prep.parts)
+                    .catch { log.append("\n[ошибка: ${it.message}]") }
+                    .collect { chunk -> log.append(chunk); speaker.feed(chunk) }
+                speaker.flush()
+            } catch (t: Throwable) {
+                log.append("\n[ошибка медиа: ${t.message}]")
+            }
+        }
+    }
+
+    // ---------- голос ----------
 
     private fun toggleListen() {
         if (ListenState.on.value) { ListenService.stop(this); return }
