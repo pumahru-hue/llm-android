@@ -5,11 +5,14 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Запись с микрофона: 16 kHz, mono, PCM 16-bit. Push-to-talk: start() ... stop(). */
 class Recorder {
@@ -38,21 +41,30 @@ class Recorder {
     }
 }
 
-/** Озвучка системным TTS. Потоковая: говорим по предложениям, пока модель ещё генерирует. */
+/**
+ * Озвучка системным TTS. Потоковая: говорим по предложениям, пока модель ещё генерирует.
+ * Состояние «говорю» общее на всё приложение: Speaker.isBusy().
+ */
 class Speaker(ctx: Context) {
     private var ready = false
     private val tts: TextToSpeech = TextToSpeech(ctx.applicationContext) { st ->
         if (st == TextToSpeech.SUCCESS) {
             ready = true
-            tts.language = Locale("ru", "RU")   // нужен установленный русский голос
+            tts.language = Locale("ru", "RU")
+            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) = finish(utteranceId)
+                @Suppress("OVERRIDE_DEPRECATION")
+                override fun onError(utteranceId: String?) = finish(utteranceId)
+                override fun onError(utteranceId: String?, errorCode: Int) = finish(utteranceId)
+                override fun onStop(utteranceId: String?, interrupted: Boolean) = finish(utteranceId)
+            })
         }
     }
     private val pending = StringBuilder()
-    private var id = 0
 
     fun feed(chunk: String) {
         pending.append(chunk)
-        // режем по концу предложения
         val re = Regex("(?<=[.!?…\n])\\s+")
         val parts = pending.toString().split(re)
         if (parts.size > 1) {
@@ -64,10 +76,29 @@ class Speaker(ctx: Context) {
     fun flush() { if (pending.isNotBlank()) say(pending.toString()); pending.clear() }
 
     private fun say(t: String) {
-        if (ready && t.isNotBlank()) tts.speak(t.trim(), TextToSpeech.QUEUE_ADD, null, "u${id++}")
+        if (!ready || t.isBlank()) return
+        val id = "u${counter.incrementAndGet()}"
+        live.add(id)
+        if (tts.speak(t.trim(), TextToSpeech.QUEUE_ADD, null, id) == TextToSpeech.ERROR) finish(id)
     }
 
-    fun stop() = tts.stop()
     fun isSpeaking(): Boolean = ready && tts.isSpeaking
-    fun shutdown() { tts.stop(); tts.shutdown() }
+
+    fun stop() { tts.stop(); live.clear(); lastEnd = SystemClock.elapsedRealtime() }
+
+    fun shutdown() { tts.stop(); tts.shutdown(); live.clear() }
+
+    companion object {
+        private val live = ConcurrentHashMap.newKeySet<String>()
+        private val counter = AtomicInteger()
+        @Volatile private var lastEnd = 0L
+
+        private fun finish(id: String?) {
+            if (id != null) live.remove(id)
+            lastEnd = SystemClock.elapsedRealtime()
+        }
+
+        /** true, пока что-то озвучивается, плюс «хвост» 0,9 с, чтобы не поймать эхо. */
+        fun isBusy(): Boolean = live.isNotEmpty() || SystemClock.elapsedRealtime() - lastEnd < 900
+    }
 }
