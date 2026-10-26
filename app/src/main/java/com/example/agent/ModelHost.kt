@@ -22,7 +22,7 @@ class ModelHost(private val ctx: Context) {
     private var conversation: Conversation? = null
     private var turns = 0
     private var lastUse = 0L
-    private var dirty = false   // в диалоге есть картинки (тяжёлый контекст)
+    private var dirty = false   // в диалоге картинки: контекст тяжёлый, следующий диалог новый
 
     val modelFile: File get() = File(ctx.getExternalFilesDir(null), "gemma-4-E2B-it.litertlm")
 
@@ -40,7 +40,7 @@ class ModelHost(private val ctx: Context) {
                 build(Backend.CPU()).also { it.initialize() }
             }
             engine = e
-            conversation = createConv(e)
+            conversation = createConv(e, withTools = true)
             turns = 0
             dirty = false
             lastUse = SystemClock.elapsedRealtime()
@@ -58,19 +58,32 @@ class ModelHost(private val ctx: Context) {
         )
     )
 
-    private fun createConv(e: Engine): Conversation = e.createConversation(
-        ConversationConfig(
-            systemInstruction = Contents.of(
-                "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно. " +
-                "Когда просят что-то сделать на телефоне (будильник, таймер, приложение, звонок, " +
-                "сообщение, фонарик, громкость, календарь, поиск), обязательно вызови подходящий " +
-                "инструмент, а потом одной фразой скажи, что сделано. " +
-                "Текущее время не угадывай, спроси у инструмента get_datetime."
-            ),
-            tools = listOf(tool(PhoneTools(ctx))),
-            samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+    private fun createConv(e: Engine, withTools: Boolean): Conversation =
+        e.createConversation(
+            if (withTools) {
+                ConversationConfig(
+                    systemInstruction = Contents.of(
+                        "Ты голосовой ассистент на телефоне. Отвечай по-русски, коротко и разговорно. " +
+                        "Когда просят что-то сделать на телефоне (будильник, таймер, приложение, звонок, " +
+                        "сообщение, фонарик, громкость, календарь, поиск), обязательно вызови подходящий " +
+                        "инструмент, а потом одной фразой скажи, что сделано. " +
+                        "Текущее время не угадывай, спроси у инструмента get_datetime."
+                    ),
+                    tools = listOf(tool(PhoneTools(ctx))),
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                )
+            } else {
+                // Диалог для картинок и видео: без инструментов, чтобы модель не принимала вопрос за команду.
+                ConversationConfig(
+                    systemInstruction = Contents.of(
+                        "Ты помощник, который смотрит на переданные изображения или кадры видео и отвечает " +
+                        "на вопрос пользователя. Ты видишь эти изображения. Отвечай по-русски, коротко и " +
+                        "по существу. Никаких действий на телефоне ты не выполняешь."
+                    ),
+                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.4),
+                )
+            }
         )
-    )
 
     /** Текущий диалог или новый, если старый устарел, переполнен или нужен чистый (медиа). */
     private suspend fun obtainConversation(fresh: Boolean): Conversation = mutex.withLock {
@@ -84,7 +97,8 @@ class ModelHost(private val ctx: Context) {
             turns = 0
             dirty = false
         }
-        val c = conversation ?: withContext(Dispatchers.Default) { createConv(e) }.also { conversation = it }
+        val c = conversation
+            ?: withContext(Dispatchers.Default) { createConv(e, withTools = !fresh) }.also { conversation = it }
         turns++
         lastUse = now
         dirty = fresh
@@ -98,6 +112,9 @@ class ModelHost(private val ctx: Context) {
         dirty = false
     }
 
+    /** Кнопка «сбросить диалог»: модель забывает весь контекст. */
+    suspend fun reset() { dropConversation() }
+
     /** Голос -> текст ответа потоком. */
     fun askWithAudio(
         pcm: ByteArray,
@@ -105,7 +122,7 @@ class ModelHost(private val ctx: Context) {
     ): Flow<String> =
         stream(Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint)), fresh = false)
 
-    /** Картинки/кадры + вопрос. Всегда в новом диалоге. */
+    /** Картинки/кадры + вопрос. Всегда в новом диалоге без инструментов. */
     fun askMedia(parts: List<Content>): Flow<String> =
         stream(Contents.of(*parts.toTypedArray()), fresh = true)
 
