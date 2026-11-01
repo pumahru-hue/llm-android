@@ -1,6 +1,6 @@
 package com.example.agent
 
-import android.app.*
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -15,33 +15,18 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import org.json.JSONObject
-import org.vosk.LibVosk
-import org.vosk.LogLevel
-import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.ByteArrayOutputStream
-import java.time.ZonedDateTime
-import java.time.format.TextStyle
 import java.util.Locale
 
 object ListenState { val on = MutableStateFlow(false) }
 
-/** «Суббота, 24 октября 2026 года, 19:23» */
-fun nowRu(): String {
-    val n = ZonedDateTime.now()
-    val months = listOf("января", "февраля", "марта", "апреля", "мая", "июня", "июля",
-        "августа", "сентября", "октября", "ноября", "декабря")
-    val wd = n.dayOfWeek.getDisplayName(TextStyle.FULL, Locale("ru"))
-    return "$wd, ${n.dayOfMonth} ${months[n.monthValue - 1]} ${n.year} года, " +
-        "%02d:%02d".format(n.hour, n.minute)
-}
-
+/** Слушает микрофон, ищет имя ассистента (Vosk), команду отдаёт в единый чат. */
 class ListenService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -59,7 +44,8 @@ class ListenService : Service() {
             Notifs.listen = "Подготовка…"
             ServiceCompat.startForeground(this, Notifs.ID, Notifs.build(this), type)
         } catch (t: Throwable) {
-            ToolLog.events.tryEmit("\n[не удалось запустить прослушивание: ${t.message}]\n")
+            Chat.note("⚠ Не удалось запустить прослушивание: ${t.message}")
+            Notifs.listen = ""
             stopSelf()
             return
         }
@@ -89,25 +75,21 @@ class ListenService : Service() {
             } catch (t: CancellationException) {
                 throw t
             } catch (t: Throwable) {
-                ToolLog.events.tryEmit("\n[прослушивание остановлено: ${t.message}]\n")
+                Chat.note("⚠ Прослушивание остановлено: ${t.message}")
             } finally {
                 ListenState.on.value = false
+                Level.level.value = 0f
                 wake?.takeIf { it.isHeld }?.release()
                 stopSelf()
             }
         }
     }
 
-    private fun wakeName(): String =
-        getSharedPreferences("agent", MODE_PRIVATE).getString("wake_name", "") ?: ""
-
     private suspend fun runLoop() {
-        val nameCheck = norm(wakeName())
-        if (nameCheck.isBlank()) error("не задано имя ассистента")
+        if (norm(Settings.wakeName(this)).isBlank()) error("не задано имя ассистента (Настройки → Активация)")
 
-        val dir = VoskModel.ensure(this) { status(it) }
-        LibVosk.setLogLevel(LogLevel.WARNINGS)
-        val model = Model(dir.path)
+        status("Готовлю распознавание…")
+        val model = Stt.model(this) { status(it) }
 
         val rate = 16000
         val min = AudioRecord.getMinBufferSize(rate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -119,21 +101,21 @@ class ListenService : Service() {
         var rec = Recognizer(model, rate.toFloat())
         val utt = ByteArrayOutputStream()
         val chunk = ByteArray(3200)                 // 100 мс
-        val preRoll = 32000                         // 1 с «тишины» перед речью
+        val preRoll = 32000                         // 1 с перед речью
         var speechActive = false
         var awaiting = false
         var deadline = 0L
         var muted = false
 
         ar.startRecording()
-        status("Слушаю. Имя: «${wakeName()}»")
-        ToolLog.events.tryEmit("\n👂 Слушаю. Имя: «${wakeName()}»\n")
+        status("Слушаю. Имя: «${Settings.wakeName(this)}»")
         try {
             while (currentCoroutineContext().isActive) {
                 val n = ar.read(chunk, 0, chunk.size)
                 if (n < 0) { delay(100); continue }
-                if (n == 0 || busy) continue
-                if (Speaker.isBusy()) { muted = true; continue }
+                if (n == 0) continue
+                if (busy) { Level.level.value = 0f; continue }
+                if (Speaker.isBusy()) { muted = true; Level.level.value = 0f; continue }
                 if (muted) {
                     muted = false
                     rec.close(); rec = Recognizer(model, rate.toFloat())
@@ -143,12 +125,14 @@ class ListenService : Service() {
                     needReset = false
                     rec.close(); rec = Recognizer(model, rate.toFloat())
                     utt.reset(); speechActive = false
-                    status("Слушаю. Имя: «${wakeName()}»")
+                    status("Слушаю. Имя: «${Settings.wakeName(this)}»")
                 }
                 if (awaiting && SystemClock.elapsedRealtime() > deadline) {
                     awaiting = false
-                    status("Слушаю. Имя: «${wakeName()}»")
+                    status("Слушаю. Имя: «${Settings.wakeName(this)}»")
                 }
+
+                Level.level.value = Level.rms(chunk, n)
 
                 utt.write(chunk, 0, n)
                 if (utt.size() > rate * 2 * 25) {   // защита: не больше 25 с
@@ -163,14 +147,14 @@ class ListenService : Service() {
                     utt.reset(); speechActive = false
                     if (text.isBlank()) continue
 
-                    ToolLog.events.tryEmit("\n👂 слышу: $text\n")
+                    Level.heard.value = text
                     status("Слышал: ${text.take(60)}")
                     val words = norm(text).split(" ").filter { it.isNotEmpty() }
-                    val nameWords = norm(wakeName()).split(" ").filter { it.isNotEmpty() }
+                    val nameWords = norm(Settings.wakeName(this)).split(" ").filter { it.isNotEmpty() }
                     val idx = findName(words, nameWords)
                     when {
-                        awaiting -> { awaiting = false; dispatch(pcm) }
-                        idx >= 0 && words.size - nameWords.size >= 2 -> dispatch(pcm)
+                        awaiting -> { awaiting = false; dispatch(pcm, text) }
+                        idx >= 0 && words.size - nameWords.size >= 2 -> dispatch(pcm, text)
                         idx >= 0 -> {
                             awaiting = true
                             deadline = SystemClock.elapsedRealtime() + 8000
@@ -191,29 +175,29 @@ class ListenService : Service() {
         } finally {
             runCatching { ar.stop() }
             ar.release()
-            rec.close()
-            model.close()
+            rec.close()   // общую модель Vosk не закрываем
         }
     }
 
-    private fun dispatch(pcm: ByteArray) {
+    private fun dispatch(pcm: ByteArray, text: String) {
         busy = true
         scope.launch {
             try {
                 val host = AgentRuntime.host(this@ListenService)
                 if (!host.isReady) {
-                    ToolLog.events.tryEmit("\n[модель Gemma ещё не загружена]\n")
+                    Chat.note("⚠ Модель Gemma ещё не загружена")
                     return@launch
                 }
                 val sp = speaker ?: return@launch
                 status("Думаю…")
-                val hint = "Сейчас ${nowRu()}. Пользователь обратился к тебе по имени «${wakeName()}». " +
-                    "Не повторяй имя, просто выполни просьбу."
-                ToolLog.events.tryEmit("\n[аудио ${pcm.size / 32000.0} с]\nАгент: ")
-                host.askWithAudio(pcm, hint)
-                    .catch { ToolLog.events.tryEmit("\n[ошибка: ${it.message}]\n") }
-                    .collect { c -> ToolLog.events.tryEmit(c); sp.feed(c) }
-                sp.flush()
+                val hint = "Сейчас ${nowRu()}. Пользователь обратился к тебе по имени " +
+                    "«${Settings.wakeName(this@ListenService)}». Не повторяй имя, просто выполни просьбу."
+                val user = ChatMsg(ChatStore.newId(), "user", text, kind = "voice")
+                val speak = Settings.ttsMode(this@ListenService) != "never"
+                Chat.ask(this@ListenService, user, Chat.voiceContents(pcm, hint), extraTokens = pcm.size / 32000 * 25)
+                    .catch { }
+                    .collect { c -> if (speak) sp.feed(c) }
+                if (speak) sp.flush()
                 status("Говорю…")
                 delay(400)
                 var t = 0
@@ -273,32 +257,6 @@ class ListenService : Service() {
         Notifs.post(this)
     }
 
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Прослушивание", NotificationManager.IMPORTANCE_LOW))
-        }
-    }
-
-    private fun notification(text: String): Notification {
-        val stop = PendingIntent.getService(
-            this, 2,
-            Intent(this, ListenService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE
-        )
-        return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("Слушаю по имени «${wakeName()}»")
-            .setContentText(text)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .addAction(android.R.drawable.ic_media_pause, "Остановить", stop)
-            .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
-                PendingIntent.FLAG_IMMUTABLE))
-            .build()
-    }
-
     override fun onBind(i: Intent?): IBinder? = null
 
     override fun onDestroy() {
@@ -313,8 +271,6 @@ class ListenService : Service() {
     }
 
     companion object {
-        const val CHANNEL = "listen"
-        const val NOTIF_ID = 2
         const val ACTION_STOP = "com.example.agent.STOP_LISTEN"
 
         fun start(ctx: Context) {

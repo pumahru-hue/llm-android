@@ -1,6 +1,5 @@
 package com.example.agent
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -14,22 +13,16 @@ import android.provider.CalendarContract
 import com.google.ai.edge.litertlm.Tool
 import com.google.ai.edge.litertlm.ToolParam
 import com.google.ai.edge.litertlm.ToolSet
-import kotlinx.coroutines.flow.MutableSharedFlow
 import java.net.URLEncoder
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.ZonedDateTime
-import java.time.format.TextStyle
-import java.util.Locale
-
-/** Журнал вызовов инструментов для экрана. */
-object ToolLog {
-    val events = MutableSharedFlow<String>(extraBufferCapacity = 64)
-}
 
 class PhoneTools(private val ctx: Context) : ToolSet {
 
-    private fun log(s: String) { ToolLog.events.tryEmit("\n🔧 $s\n") }
+    /** Вызов инструмента виден в чате отдельной серой строкой. */
+    private fun log(s: String) {
+        ChatStore.add(ChatMsg(ChatStore.newId(), "tool", "🔧 $s", inCtx = false))
+    }
 
     private fun launch(i: Intent): Map<String, Any> = try {
         ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

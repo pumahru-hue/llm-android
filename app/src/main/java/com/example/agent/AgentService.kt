@@ -10,8 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
-import androidx.core.app.NotificationCompat
+import android.provider.Settings as AndroidSettings
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.*
 
@@ -42,7 +41,7 @@ class AgentService : Service() {
     private suspend fun loadModelIfPresent() {
         val host = AgentRuntime.host(this)
         if (!host.modelFile.exists()) {
-            status("Модели нет. Нажмите «Скачать модель».")
+            status("Модели нет. Откройте Настройки → Модель и скачайте её.")
             return
         }
         status("Загружаю модель…")
@@ -68,7 +67,7 @@ class AgentService : Service() {
                 status("Проверяю файл…")
                 if (!Downloader.sha256Ok(part)) {
                     part.delete()
-                    status("Файл повреждён. Нажмите «Скачать модель» ещё раз.")
+                    status("Файл повреждён. Скачайте модель ещё раз.")
                     return@launch
                 }
                 part.renameTo(host.modelFile)
@@ -98,32 +97,14 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
-        scope.cancel(); wake?.takeIf { it.isHeld }?.release()
         Notifs.agentAlive = false
+        scope.cancel(); wake?.takeIf { it.isHeld }?.release()
         super.onDestroy()
     }
 
     override fun onBind(i: Intent?): IBinder? = null
 
-    private fun createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "Агент", NotificationManager.IMPORTANCE_LOW))
-        }
-    }
-
-    private fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL)
-        .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-        .setContentTitle("Агент работает")
-        .setContentText(text)
-        .setOngoing(true)
-        .setOnlyAlertOnce(true)
-        .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE))
-        .build()
-
     companion object {
-        const val CHANNEL = "agent"; const val NOTIF_ID = 1
         const val ACTION_DOWNLOAD = "com.example.agent.DOWNLOAD"
 
         fun start(ctx: Context, action: String? = null) {
@@ -134,7 +115,7 @@ class AgentService : Service() {
         fun requestIgnoreBattery(ctx: Context) {
             val pm = ctx.getSystemService(PowerManager::class.java)
             if (!pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
-                ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                ctx.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                     Uri.parse("package:${ctx.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             }
         }

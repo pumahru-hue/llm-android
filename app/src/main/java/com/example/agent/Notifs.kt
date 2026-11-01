@@ -42,7 +42,7 @@ object Notifs {
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
             .setContentIntent(
-                PendingIntent.getActivity(ctx, 0, Intent(ctx, MainActivity::class.java),
+                PendingIntent.getActivity(ctx, 0, Intent(ctx, ChatActivity::class.java),
                     PendingIntent.FLAG_IMMUTABLE)
             )
         if (listening) {

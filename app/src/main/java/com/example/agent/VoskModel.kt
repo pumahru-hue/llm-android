@@ -21,7 +21,7 @@ object VoskModel {
 
         root.mkdirs()
         val zip = File(ctx.cacheDir, "vosk-ru.zip")
-        say("Скачиваю модель распознавания имени (45 МБ)…")
+        say("Скачиваю модель распознавания речи (45 МБ)…")
         val c = URL(ZIP_URL).openConnection() as HttpURLConnection
         c.connectTimeout = 20_000
         c.readTimeout = 30_000

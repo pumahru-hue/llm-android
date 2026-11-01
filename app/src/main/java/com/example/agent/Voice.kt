@@ -29,7 +29,13 @@ class Recorder {
         buf.reset(); rec = r; r.startRecording()
         job = scope.launch(Dispatchers.IO) {
             val tmp = ByteArray(min)
-            while (isActive) { val n = r.read(tmp, 0, tmp.size); if (n > 0) buf.write(tmp, 0, n) }
+            while (isActive) {
+                val n = r.read(tmp, 0, tmp.size)
+                if (n > 0) {
+                    buf.write(tmp, 0, n)
+                    Level.level.value = Level.rms(tmp, n)
+                }
+            }
         }
     }
 
@@ -37,12 +43,13 @@ class Recorder {
         job?.cancelAndJoin()
         rec?.run { stop(); release() }
         rec = null
+        Level.level.value = 0f
         return buf.toByteArray()
     }
 }
 
 /**
- * Озвучка системным TTS. Потоковая: говорим по предложениям, пока модель ещё генерирует.
+ * Озвучка системным TTS: говорим по предложениям, пока модель ещё генерирует.
  * Состояние «говорю» общее на всё приложение: Speaker.isBusy().
  */
 class Speaker(ctx: Context) {

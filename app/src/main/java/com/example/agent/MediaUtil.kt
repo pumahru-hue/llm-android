@@ -8,39 +8,38 @@ import android.media.ExifInterface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 
-class Prepared(val parts: List<Content>, val preview: ByteArray)
+/** kind: "photo" или "video"; для видео jpegs — кадры, times — моменты в мс. */
+class Prepared(val kind: String, val jpegs: List<ByteArray>, val times: List<Long>)
 
 object MediaUtil {
     const val IMAGE_SIDE = 768    // длинная сторона фото
     const val FRAME_SIDE = 448    // длинная сторона кадра видео
     const val FRAMES = 6          // сколько кадров берём из видео
 
-    fun prepare(ctx: Context, uri: Uri, question: String): Prepared {
+    fun prepare(ctx: Context, uri: Uri): Prepared {
         val mime = ctx.contentResolver.getType(uri) ?: ""
-        val q = question.ifBlank { "Опиши, что видишь." }
-
         if (mime.startsWith("video")) {
             val frames = videoFrames(ctx, uri)
             require(frames.isNotEmpty()) { "не удалось достать кадры из видео" }
-            val times = frames.joinToString { fmt(it.first) }
-            val parts = buildList<Content> {
-                add(Content.Text("Это ${frames.size} кадров одного видео по порядку (моменты: $times). " +
-                    "Отвечай по-русски."))
-                frames.forEach { add(Content.ImageBytes(it.second)) }
-                add(Content.Text(q))
-            }
-            return Prepared(parts, frames.first().second)
+            return Prepared("video", frames.map { it.second }, frames.map { it.first })
         }
+        return Prepared("photo", listOf(imageJpeg(ctx, uri)), emptyList())
+    }
 
-        val jpeg = imageJpeg(ctx, uri)
-        val parts = listOf<Content>(
-            Content.ImageBytes(jpeg),
-            Content.Text("$q Отвечай по-русски."),
-        )
-        return Prepared(parts, jpeg)
+    /** То, что реально уходит в модель: (интро для видео) + картинки + вопрос. */
+    fun contents(p: Prepared, question: String): Contents {
+        val parts = ArrayList<Content>()
+        if (p.kind == "video") {
+            parts += Content.Text("Это ${p.jpegs.size} кадров одного видео по порядку " +
+                "(моменты: ${p.times.joinToString { fmt(it) }}).")
+        }
+        p.jpegs.forEach { parts += Content.ImageBytes(it) }
+        parts += Content.Text(question)
+        return Contents.of(*parts.toTypedArray())
     }
 
     private fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, ms / 1000 % 60)

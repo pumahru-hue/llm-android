@@ -1,4 +1,3 @@
-
 package com.example.agent
 
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +40,7 @@ object Downloader {
                     c.instanceFollowRedirects = true
                     if (have > 0) c.setRequestProperty("Range", "bytes=$have-")
                     val code = c.responseCode
-                    if (code == 416) { result = part; continue }   // уже докачано
+                    if (code == 416) { result = part; continue }
                     if (code != 200 && code != 206) throw IOException("HTTP $code")
                     val resume = code == 206
                     val start = if (resume) have else 0L
@@ -64,7 +63,7 @@ object Downloader {
                     result = part
                 } catch (e: IOException) {
                     if (++attempts > 30) throw e
-                    delay(3000)   // и пробуем докачать
+                    delay(3000)
                 }
             }
             result
