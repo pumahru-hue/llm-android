@@ -27,7 +27,7 @@ object CrashLog {
             val text = runCatching { f.readText() }.getOrDefault("")
             f.delete()
             if (text.isNotBlank()) {
-                Chat.note("💥 Приложение упало:\n" + text.lines().take(18).joinToString("\n").take(1800))
+                Chat.note("💥 Приложение упало:\n" + text.take(6000))
             }
             return
         }
