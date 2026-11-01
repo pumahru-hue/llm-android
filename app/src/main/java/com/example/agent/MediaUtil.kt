@@ -42,6 +42,17 @@ object MediaUtil {
         return Contents.of(*parts.toTypedArray())
     }
 
+    /** Интро (для видео) + картинки. */
+    fun parts(p: Prepared): List<Content> {
+        val out = ArrayList<Content>()
+        if (p.kind == "video") {
+            out += Content.Text("Это ${p.jpegs.size} кадров одного видео по порядку " +
+                "(моменты: ${p.times.joinToString { fmt(it) }}).")
+        }
+        p.jpegs.forEach { out += Content.ImageBytes(it) }
+        return out
+    }
+
     private fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, ms / 1000 % 60)
 
     private fun imageJpeg(ctx: Context, uri: Uri): ByteArray {
