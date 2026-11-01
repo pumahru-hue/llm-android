@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.LruCache
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,7 +23,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.ai.edge.litertlm.Content
-import com.google.ai.edge.litertlm.Contents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -38,6 +38,9 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var subtitle: TextView
     private lateinit var input: EditText
     private lateinit var actionHolder: FrameLayout
+    private lateinit var attachBar: LinearLayout
+    private lateinit var attachThumb: ImageView
+    private lateinit var attachLabel: TextView
     private var levelView: LevelView? = null
 
     private var recording = false
@@ -45,23 +48,24 @@ class ChatActivity : AppCompatActivity() {
     private var busyNow = false
     private var modelStatus = ""
     private var pendingUri: Uri? = null
+    private var pending: Prepared? = null
 
     private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         AgentService.start(this)
     }
     private val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        if (ok) pendingUri?.let { askAboutMedia(it) }
+        if (ok) pendingUri?.let { stageMedia(it) }
     }
     private val takeVideo = registerForActivityResult(ActivityResultContracts.CaptureVideo()) { ok ->
-        if (ok) pendingUri?.let { askAboutMedia(it) }
+        if (ok) pendingUri?.let { stageMedia(it) }
     }
     private val pickMedia = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) askAboutMedia(uri)
+        if (uri != null) stageMedia(uri)
     }
 
     private fun dp(v: Int) = Ui.dp(this, v)
 
-    private fun iconBtn(res: Int, desc: String, bg: Int? = null, onClick: (android.view.View) -> Unit) = ImageButton(this).apply {
+    private fun iconBtn(res: Int, desc: String, bg: Int? = null, onClick: (View) -> Unit) = ImageButton(this).apply {
         setImageResource(res)
         setColorFilter(Color.WHITE)
         contentDescription = desc
@@ -75,9 +79,9 @@ class ChatActivity : AppCompatActivity() {
         super.onCreate(s)
         supportActionBar?.hide()
         ChatStore.init(this)
-        speaker = Speaker(this)
         CrashLog.report(this)
-        
+        speaker = Speaker(this)
+
         // верхняя панель
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -105,6 +109,22 @@ class ChatActivity : AppCompatActivity() {
             adapter = this@ChatActivity.adapter
             clipToPadding = false
         }
+
+        // полоса вложения (появляется после фото/видео/галереи)
+        attachThumb = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        attachLabel = TextView(this).apply { textSize = 13f; setTextColor(Color.WHITE) }
+        val attachClose = iconBtn(android.R.drawable.ic_menu_close_clear_cancel, "Убрать вложение") { clearPending() }
+        attachBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFF37474F.toInt())
+            setPadding(dp(12), dp(6), dp(8), dp(6))
+            visibility = View.GONE
+        }
+        attachBar.addView(attachThumb, LinearLayout.LayoutParams(dp(56), dp(56)))
+        attachBar.addView(attachLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            .apply { setMargins(dp(10), 0, dp(10), 0) })
+        attachBar.addView(attachClose, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         // поле ввода: вложение, текст, отправить
         input = EditText(this).apply { hint = "Сообщение"; maxLines = 4 }
@@ -134,6 +154,7 @@ class ChatActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             addView(bar)
             addView(rv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(attachBar)
             addView(inputRow)
             addView(actionRow)
         })
@@ -215,6 +236,50 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
+    // ---------- вложение ----------
+
+    private fun renderAttach() {
+        val p = pending
+        if (p == null) {
+            attachBar.visibility = View.GONE
+            input.hint = "Сообщение"
+            return
+        }
+        val first = p.jpegs.first()
+        attachThumb.setImageBitmap(BitmapFactory.decodeByteArray(first, 0, first.size))
+        attachLabel.text = if (p.kind == "video")
+            "🎞 Видео: ${p.jpegs.size} кадров. Напишите или скажите вопрос"
+        else "📷 Фото. Напишите или скажите вопрос"
+        attachBar.visibility = View.VISIBLE
+        input.hint = "Ваш вопрос к вложению"
+    }
+
+    private fun clearPending() {
+        pending = null
+        renderAttach()
+    }
+
+    private fun stageMedia(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                pending = withContext(Dispatchers.Default) { MediaUtil.prepare(this@ChatActivity, uri) }
+                renderAttach()
+                input.requestFocus()
+            } catch (t: Throwable) {
+                Chat.note("⚠ Медиа: ${t.message}")
+            }
+        }
+    }
+
+    /** Забирает вложение и сохраняет его кадры в чат. */
+    private suspend fun takePending(): Pair<Prepared, List<String>>? {
+        val p = pending ?: return null
+        pending = null
+        renderAttach()
+        val names = withContext(Dispatchers.IO) { p.jpegs.map { ChatStore.saveImage(it) } }
+        return p to names
+    }
+
     // ---------- отправка ----------
 
     private fun ready(): Boolean {
@@ -223,7 +288,7 @@ class ChatActivity : AppCompatActivity() {
         return false
     }
 
-    private fun runAsk(user: ChatMsg, live: Contents, voice: Boolean, extra: Int = 0) {
+    private fun runAsk(user: ChatMsg, live: List<Content>, voice: Boolean, extra: Int = 0) {
         val speak = when (Settings.ttsMode(this)) { "always" -> true; "never" -> false; else -> voice }
         speaker.stop()
         lifecycleScope.launch {
@@ -236,9 +301,19 @@ class ChatActivity : AppCompatActivity() {
 
     private fun sendText() {
         val t = input.text.toString().trim()
-        if (t.isEmpty() || !ready()) return
+        if ((t.isEmpty() && pending == null) || !ready()) return
         input.setText("")
-        runAsk(ChatMsg(ChatStore.newId(), "user", t), Contents.of(Content.Text(t)), voice = false)
+        lifecycleScope.launch {
+            val att = takePending()
+            if (att == null) {
+                runAsk(ChatMsg(ChatStore.newId(), "user", t), listOf(Content.Text(t)), voice = false)
+            } else {
+                val (prep, names) = att
+                val q = t.ifEmpty { DEFAULT_Q }
+                val user = ChatMsg(ChatStore.newId(), "user", q, kind = prep.kind, images = names)
+                runAsk(user, MediaUtil.parts(prep) + Content.Text(q), voice = false)
+            }
+        }
     }
 
     private fun onMicClick() {
@@ -259,8 +334,13 @@ class ChatActivity : AppCompatActivity() {
                 val pcm = recorder.stop()
                 if (pcm.size < 8000) return@launch    // меньше 0,25 с — случайное нажатие
                 val text = Stt.transcribe(this@ChatActivity, pcm) { Chat.note(it) }
-                val user = ChatMsg(ChatStore.newId(), "user", text.ifBlank { "(голосовое сообщение)" }, kind = "voice")
-                runAsk(user, Chat.voiceContents(pcm), voice = true, extra = pcm.size / 32000 * 25)
+                val att = takePending()
+                val user = ChatMsg(
+                    ChatStore.newId(), "user", text.ifBlank { "(голосовое сообщение)" },
+                    kind = "voice", images = att?.second ?: emptyList()
+                )
+                val media = att?.let { MediaUtil.parts(it.first) } ?: emptyList()
+                runAsk(user, Chat.voiceParts(pcm, media = media), voice = true, extra = pcm.size / 32000 * 25)
             }
         }
     }
@@ -284,6 +364,7 @@ class ChatActivity : AppCompatActivity() {
             .setMessage("Вся переписка, картинки и контекст модели будут удалены.")
             .setPositiveButton("Очистить") { _, _ ->
                 speaker.stop()
+                clearPending()
                 ChatStore.clear()
                 lifecycleScope.launch { AgentRuntime.host(this@ChatActivity).dropConversation() }
                 Chat.usage.value = Tokens.usage(this)
@@ -292,9 +373,9 @@ class ChatActivity : AppCompatActivity() {
             .show()
     }
 
-    // ---------- камера и медиа ----------
+    // ---------- камера и галерея ----------
 
-    private fun showAttachMenu(anchor: android.view.View) {
+    private fun showAttachMenu(anchor: View) {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, "📷 Фото")
             menu.add(0, 2, 1, "🎞 Видео")
@@ -318,23 +399,11 @@ class ChatActivity : AppCompatActivity() {
         return FileProvider.getUriForFile(this, "$packageName.fileprovider", f)
     }
 
-    private fun askAboutMedia(uri: Uri) {
-        if (!ready()) return
-        val q = input.text.toString().trim().ifEmpty { "Что на этом снимке? Опиши коротко." }
-        input.setText("")
-        lifecycleScope.launch {
-            try {
-                val prep = withContext(Dispatchers.Default) { MediaUtil.prepare(this@ChatActivity, uri) }
-                val names = withContext(Dispatchers.IO) { prep.jpegs.map { ChatStore.saveImage(it) } }
-                val user = ChatMsg(ChatStore.newId(), "user", q, kind = prep.kind, images = names)
-                runAsk(user, MediaUtil.contents(prep, q), voice = false)
-            } catch (t: Throwable) {
-                Chat.note("⚠ Медиа: ${t.message}")
-            }
-        }
-    }
-
     override fun onDestroy() { speaker.shutdown(); super.onDestroy() }
+
+    companion object {
+        const val DEFAULT_Q = "Что на этом снимке? Опиши коротко."
+    }
 
     // ---------- адаптер чата ----------
 
@@ -423,7 +492,7 @@ class ChatActivity : AppCompatActivity() {
                     gravity = Gravity.CENTER
                 }, LinearLayout.LayoutParams(dp(40), dp(96)))
             }
-            h.imgs.visibility = if (shown.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+            h.imgs.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
         }
 
         private fun thumb(name: String): Bitmap? {
