@@ -35,7 +35,7 @@ android {
 }
 
 dependencies {
-    implementation("com.google.ai.edge.litertlm:litertlm-android:latest.release")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")
     implementation("com.alphacephei:vosk-android:0.3.75")
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("androidx.core:core-ktx:1.12.0")
