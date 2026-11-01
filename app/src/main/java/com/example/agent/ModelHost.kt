@@ -53,14 +53,23 @@ class ModelHost(private val ctx: Context) {
         )
     )
 
-    private fun createConv(e: Engine, initial: List<Message>): Conversation = e.createConversation(
-        ConversationConfig(
-            systemInstruction = Contents.of(Settings.prompt(ctx)),
-            initialMessages = initial,
-            tools = listOf(tool(PhoneTools(ctx))),
-            samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
-        )
-    )
+    private fun createConv(e: Engine, initial: List<Message>): Conversation {
+        val cfg = if (initial.isEmpty()) {
+            ConversationConfig(
+                systemInstruction = Contents.of(Settings.prompt(ctx)),
+                tools = listOf(tool(PhoneTools(ctx))),
+                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+            )
+        } else {
+            ConversationConfig(
+                systemInstruction = Contents.of(Settings.prompt(ctx)),
+                initialMessages = initial,
+                tools = listOf(tool(PhoneTools(ctx))),
+                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+            )
+        }
+        return e.createConversation(cfg)
+    }
 
     /** Диалог, уже содержащий ровно эти сообщения; иначе пересобираем из истории. */
     suspend fun conversationFor(ids: List<Long>, initial: () -> List<Message>): Conversation = mutex.withLock {
