@@ -120,7 +120,7 @@ object ChatStore {
 object Tokens {
     private val CTX_ROLES = setOf("user", "assistant", "event")
 
-    fun overhead(ctx: Context) = Settings.prompt(ctx).length / 3 + 900   // промпт + схемы инструментов
+    fun overhead(ctx: Context) = Settings.effectivePrompt(ctx).length / 3 + 900   // промпт + схемы инструментов
 
     fun of(ctx: Context, m: ChatMsg): Int {
         if (m.role !in CTX_ROLES) return 0
@@ -177,14 +177,12 @@ object Chat {
     /**
      * Единый чат: сообщение пользователя попадает в историю, контекст при необходимости сжимается,
      * диалог модели пересобирается из истории, ответ стримится и тоже пишется в историю.
-     * live — то, что реально уйдёт в модель (например, звук), а user — то, что видит чат (расшифровка).
+     * liveParts — то, что реально уйдёт в модель (например, звук), а user — то, что видит чат (расшифровка).
      */
     fun ask(ctx: Context, user: ChatMsg, liveParts: List<Content>, extraTokens: Int = 0): Flow<String> = flow {
         val app = ctx.applicationContext
         val host = AgentRuntime.host(app)
         val pin = pinnedParts(app, user)
-        val live = Contents.of(*(pin + liveParts).toTypedArray())
-        val extra = extraTokens + pin.count { it is Content.ImageBytes } * Settings.tokImage(app)
         ChatStore.add(user)
         genMutex.withLock {
             busy.value = true
@@ -193,6 +191,13 @@ object Chat {
                 var attempt = 0
                 var factor = 1.0
                 while (true) {
+                    // при повторе после ошибки напоминание о картинке не прикладываем
+                    val usePin = attempt == 0 && pin.isNotEmpty()
+                    val parts = if (usePin) pin + liveParts else liveParts
+                    val live = Contents.of(*parts.toTypedArray())
+                    val extra = extraTokens +
+                        if (usePin) pin.count { it is Content.ImageBytes } * Settings.tokImage(app) else 0
+
                     val removed = Trimmer.trim(app, user, extra, factor)
                     if (removed > 0) ChatStore.resetUi()
 
@@ -226,10 +231,15 @@ object Chat {
                     } catch (e: Throwable) {
                         host.dropConversation()
                         if (emitted || attempt++ >= 1) {
-                            note("⚠ Ошибка модели: ${e.message}")
+                            val msg = e.message ?: e.toString()
+                            val tip = if (msg.contains("embedding buffer") || msg.contains("state entries"))
+                                "\nСообщение (картинки, звук) не помещается в окно модели: уменьшите картинки, " +
+                                    "снизьте лимит контекста в настройках или очистите чат."
+                            else ""
+                            note("⚠ Ошибка модели: $msg$tip")
                             throw e
                         }
-                        factor *= 0.5
+                        factor *= 0.5    // вероятно переполнен контекст: сжимаем сильнее и пробуем ещё раз
                     }
                 }
             } finally {
@@ -240,7 +250,7 @@ object Chat {
         }
     }
 
-    /** Последняя картинка/видео из контекста: прикладываем заново к следующим репликам. */
+    /** Последняя картинка/видео из контекста: прикладываем заново (уменьшенной) к следующим репликам. */
     private fun pinnedParts(ctx: Context, user: ChatMsg): List<Content> {
         val turns = Settings.pinTurns(ctx)
         if (turns <= 0 || user.images.isNotEmpty()) return emptyList()
@@ -254,9 +264,9 @@ object Chat {
         val out = ArrayList<Content>()
         out += Content.Text("(Напоминание: это ${if (m.kind == "video") "кадры видео" else "изображение"} " +
             "из предыдущего сообщения, вопрос может относиться к нему.)")
-        for (img in m.images) {
+        for (img in m.images.take(3)) {
             val f = ChatStore.imageFile(img)
-            if (f.exists()) out += Content.ImageBytes(f.readBytes())
+            if (f.exists()) out += Content.ImageBytes(MediaUtil.downscale(f.readBytes(), 384))
         }
         return out
     }
