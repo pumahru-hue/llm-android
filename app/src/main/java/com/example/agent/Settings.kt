@@ -35,4 +35,6 @@ object Settings {
     fun keepFirst(c: Context) = int(c, CTX_KEEP_FIRST, 2)
     fun tokImage(c: Context) = int(c, TOK_IMAGE, 280)
     fun ttsMode(c: Context) = str(c, TTS_MODE, "voice")
+    const val PIN_TURNS = "pin_turns"
+    fun pinTurns(c: Context) = int(c, PIN_TURNS, 3)
 }
