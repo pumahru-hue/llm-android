@@ -211,6 +211,8 @@ class ListenService : Service() {
                 Chat.note("⚠ Сбой обработки: $t")
             } finally {
                 needReset = true
+                busy = false
+            }
         }
     }
 
