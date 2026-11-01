@@ -53,6 +53,13 @@ object MediaUtil {
         return out
     }
 
+    /** Перекодирует JPEG в меньший размер (для повторно прикладываемых картинок). */
+    fun downscale(jpeg: ByteArray, maxSide: Int): ByteArray {
+        val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return jpeg
+        if (maxOf(bmp.width, bmp.height) <= maxSide) return jpeg
+        return encode(bmp, 0, maxSide)
+    }
+
     private fun fmt(ms: Long) = "%d:%02d".format(ms / 60000, ms / 1000 % 60)
 
     private fun imageJpeg(ctx: Context, uri: Uri): ByteArray {
