@@ -36,6 +36,14 @@ jobs:
           [ -z "$txt" ] && txt=$(tail -n 40 build.log)
           msg=$(echo "$txt" | cut -c1-300 | head -c 3500 | sed ':a;N;$!ba;s/\n/%0A/g')
           echo "::error title=Kotlin::$msg"
+      - name: Show resolved versions
+        if: always()
+        shell: bash
+        run: |
+          v=$(gradle -q :app:dependencies --configuration debugRuntimeClasspath 2>/dev/null | grep -E "litertlm|kotlinx-serialization|kotlin-stdlib|vosk|jna" | sed 's/^[ |+\\-]*//' | sort -u | head -14)
+          m=$(curl -s https://dl.google.com/dl/android/maven2/com/google/ai/edge/litertlm/litertlm-android/maven-metadata.xml | grep -oE "<(latest|release|version)>[^<]+" | sed -E 's/<[a-z]+>//' | tr '\n' ' ')
+          msg=$(printf "%s\nДоступные версии: %s" "$v" "$m" | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::notice title=deps::$msg"
       - uses: actions/upload-artifact@v4
         with:
           name: agent-debug-apk
