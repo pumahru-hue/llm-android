@@ -196,7 +196,7 @@ class ListenService : Service() {
                     "«${Settings.wakeName(this@ListenService)}». Не повторяй имя, просто выполни просьбу."
                 val user = ChatMsg(ChatStore.newId(), "user", text, kind = "voice")
                 val speak = Settings.ttsMode(this@ListenService) != "never"
-                Chat.ask(this@ListenService, user, Chat.voiceContents(pcm, hint), extraTokens = pcm.size / 32000 * 25)
+                Chat.ask(this@ListenService, user, Chat.voiceParts(pcm, hint), extraTokens = pcm.size / 32000 * 25)
                     .catch { }
                     .collect { c -> if (speak) sp.feed(c) }
                 if (speak) sp.flush()
