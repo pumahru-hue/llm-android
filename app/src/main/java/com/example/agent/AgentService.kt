@@ -16,7 +16,9 @@ import kotlinx.coroutines.*
 
 class AgentService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default + CoroutineExceptionHandler { _, e -> Chat.note("⚠ Сбой: $e") }
+    )
     private var wake: PowerManager.WakeLock? = null
 
     override fun onCreate() {
