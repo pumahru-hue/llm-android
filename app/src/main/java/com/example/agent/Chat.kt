@@ -168,17 +168,23 @@ object Chat {
         ChatStore.add(ChatMsg(ChatStore.newId(), "note", text, inCtx = false))
     }
 
-    fun voiceContents(pcm: ByteArray, hint: String = "Сейчас ${nowRu()}. Ответь на то, что сказал пользователь."): Contents =
-        Contents.of(Content.AudioBytes(Wav.wrap(pcm)), Content.Text(hint))
+    fun voiceParts(
+        pcm: ByteArray,
+        hint: String = "Сейчас ${nowRu()}. Ответь на то, что сказал пользователь.",
+        media: List<Content> = emptyList(),
+    ): List<Content> = listOf<Content>(Content.AudioBytes(Wav.wrap(pcm))) + media + Content.Text(hint)
 
     /**
      * Единый чат: сообщение пользователя попадает в историю, контекст при необходимости сжимается,
      * диалог модели пересобирается из истории, ответ стримится и тоже пишется в историю.
      * live — то, что реально уйдёт в модель (например, звук), а user — то, что видит чат (расшифровка).
      */
-    fun ask(ctx: Context, user: ChatMsg, live: Contents, extraTokens: Int = 0): Flow<String> = flow {
+    fun ask(ctx: Context, user: ChatMsg, liveParts: List<Content>, extraTokens: Int = 0): Flow<String> = flow {
         val app = ctx.applicationContext
         val host = AgentRuntime.host(app)
+        val pin = pinnedParts(app, user)
+        val live = Contents.of(*(pin + liveParts).toTypedArray())
+        val extra = extraTokens + pin.count { it is Content.ImageBytes } * Settings.tokImage(app)
         ChatStore.add(user)
         genMutex.withLock {
             busy.value = true
@@ -187,7 +193,7 @@ object Chat {
                 var attempt = 0
                 var factor = 1.0
                 while (true) {
-                    val removed = Trimmer.trim(app, user, extraTokens, factor)
+                    val removed = Trimmer.trim(app, user, extra, factor)
                     if (removed > 0) ChatStore.resetUi()
 
                     val hist = ChatStore.snapshot().filter {
@@ -223,7 +229,7 @@ object Chat {
                             note("⚠ Ошибка модели: ${e.message}")
                             throw e
                         }
-                        factor *= 0.5    // вероятно переполнен контекст: сжимаем сильнее и пробуем ещё раз
+                        factor *= 0.5
                     }
                 }
             } finally {
@@ -232,6 +238,27 @@ object Chat {
                 usage.value = Tokens.usage(app)
             }
         }
+    }
+
+    /** Последняя картинка/видео из контекста: прикладываем заново к следующим репликам. */
+    private fun pinnedParts(ctx: Context, user: ChatMsg): List<Content> {
+        val turns = Settings.pinTurns(ctx)
+        if (turns <= 0 || user.images.isNotEmpty()) return emptyList()
+        val msgs = ChatStore.snapshot().filter {
+            it !== user && it.inCtx && (it.role == "user" || it.role == "assistant" || it.role == "event")
+        }
+        val idx = msgs.indexOfLast { it.role == "user" && it.images.isNotEmpty() }
+        if (idx < 0) return emptyList()
+        if (msgs.drop(idx + 1).count { it.role == "user" } >= turns) return emptyList()
+        val m = msgs[idx]
+        val out = ArrayList<Content>()
+        out += Content.Text("(Напоминание: это ${if (m.kind == "video") "кадры видео" else "изображение"} " +
+            "из предыдущего сообщения, вопрос может относиться к нему.)")
+        for (img in m.images) {
+            val f = ChatStore.imageFile(img)
+            if (f.exists()) out += Content.ImageBytes(f.readBytes())
+        }
+        return out
     }
 
     /** История -> сообщения для модели. Роли чередуются user/model, хвост всегда model. */
