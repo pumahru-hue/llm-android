@@ -63,6 +63,7 @@ class SettingsActivity : AppCompatActivity() {
         nav("Модель", "model")
         nav("Системный промпт", "prompt")
         nav("Контекст чата", "context")
+        button(batteryLabel()) { AgentService.requestIgnoreBattery(this) }
         hint("Готовится в следующих этапах:")
         soon("MCP-серверы (JSON)")
         soon("События: SMS и звонки")
@@ -77,7 +78,6 @@ class SettingsActivity : AppCompatActivity() {
         edit("Имя ассистента (для режима «по имени»)", Settings.WAKE_NAME, "")
         hint("Лучше имя из двух-трёх слогов, редкое в обычной речи. Фразу «слышу: …» видно под заголовком " +
             "главного экрана, по ней легко подобрать имя, которое хорошо распознаётся.")
-        button("Отключить экономию батареи") { AgentService.requestIgnoreBattery(this) }
     }
 
     private fun pageVoice() {
@@ -97,7 +97,6 @@ class SettingsActivity : AppCompatActivity() {
         button("Скачать модель (2,6 ГБ, лучше по Wi-Fi)") {
             AgentService.start(this, AgentService.ACTION_DOWNLOAD)
         }
-        button("Отключить экономию батареи") { AgentService.requestIgnoreBattery(this) }
     }
 
     private fun pagePrompt() {
@@ -127,6 +126,12 @@ class SettingsActivity : AppCompatActivity() {
 
     // ---------- элементы ----------
 
+    private fun batteryLabel(): String {
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        return if (pm.isIgnoringBatteryOptimizations(packageName)) "Экономия батареи: отключена ✓"
+        else "Отключить экономию батареи (рекомендуется)"
+    }
+    
     private fun hint(t: String) {
         col.addView(TextView(this).apply {
             text = t
