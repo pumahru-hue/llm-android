@@ -452,6 +452,12 @@ class ChatActivity : AppCompatActivity() {
 
         override fun onBindViewHolder(h: VH, position: Int) {
             val m = items[position]
+            h.root.setOnLongClickListener {
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("chat", m.text))
+                Toast.makeText(this@ChatActivity, "Скопировано", Toast.LENGTH_SHORT).show()
+                true
+            }
             val type = getItemViewType(position)
             val prefix = when {
                 m.role == "event" -> "🔔 "
