@@ -76,7 +76,8 @@ class ChatActivity : AppCompatActivity() {
         supportActionBar?.hide()
         ChatStore.init(this)
         speaker = Speaker(this)
-
+        CrashLog.report(this)
+        
         // верхняя панель
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
