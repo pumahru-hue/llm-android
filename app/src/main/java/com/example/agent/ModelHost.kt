@@ -1,7 +1,6 @@
 package com.example.agent
 
 import android.content.Context
-import android.os.SystemClock
 import android.util.Log
 import com.google.ai.edge.litertlm.*
 import kotlinx.coroutines.CoroutineScope
@@ -54,18 +53,21 @@ class ModelHost(private val ctx: Context) {
     )
 
     private fun createConv(e: Engine, initial: List<Message>): Conversation {
+        val toolList = if (Settings.toolsOn(ctx)) listOf(tool(PhoneTools(ctx))) else emptyList()
+        val prompt = Contents.of(Settings.effectivePrompt(ctx))
+        val sampler = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7)
         val cfg = if (initial.isEmpty()) {
             ConversationConfig(
-                systemInstruction = Contents.of(Settings.prompt(ctx)),
-                tools = listOf(tool(PhoneTools(ctx))),
-                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                systemInstruction = prompt,
+                tools = toolList,
+                samplerConfig = sampler,
             )
         } else {
             ConversationConfig(
-                systemInstruction = Contents.of(Settings.prompt(ctx)),
+                systemInstruction = prompt,
                 initialMessages = initial,
-                tools = listOf(tool(PhoneTools(ctx))),
-                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7),
+                tools = toolList,
+                samplerConfig = sampler,
             )
         }
         return e.createConversation(cfg)
