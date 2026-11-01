@@ -120,6 +120,7 @@ class SettingsActivity : AppCompatActivity() {
             "middle" to "Середину (начало и свежее остаются)"), "start")
         edit("Для «середины»: сколько первых сообщений оставлять", Settings.CTX_KEEP_FIRST, "2", number = true)
         edit("Оценка токенов на одну картинку или кадр", Settings.TOK_IMAGE, "280", number = true)
+        edit("Повторять последнюю картинку в N следующих репликах (0 = выключено)", Settings.PIN_TURNS, "3", number = true)
         hint("Сейчас в контексте ≈ ${Tokens.usage(this)} токенов. Убранные сообщения остаются в чате " +
             "бледными, но модель их больше не видит.")
     }
