@@ -20,6 +20,8 @@ object Settings {
     const val CTX_KEEP_FIRST = "ctx_keep_first"
     const val TOK_IMAGE = "tok_image"
     const val TTS_MODE = "tts_mode"            // "voice" | "always" | "never"
+    const val PIN_TURNS = "pin_turns"
+    const val TOOLS_ON = "tools_on"
 
     private fun sp(c: Context) = c.getSharedPreferences("agent", Context.MODE_PRIVATE)
     fun str(c: Context, k: String, d: String): String = sp(c).getString(k, d) ?: d
@@ -35,6 +37,20 @@ object Settings {
     fun keepFirst(c: Context) = int(c, CTX_KEEP_FIRST, 2)
     fun tokImage(c: Context) = int(c, TOK_IMAGE, 280)
     fun ttsMode(c: Context) = str(c, TTS_MODE, "voice")
-    const val PIN_TURNS = "pin_turns"
     fun pinTurns(c: Context) = int(c, PIN_TURNS, 3)
+    fun toolsOn(c: Context) = int(c, TOOLS_ON, 1) == 1
+
+    /** Промпт, который реально уходит в модель: ваш + правила про инструменты. */
+    fun effectivePrompt(c: Context): String {
+        val base = prompt(c)
+        return if (toolsOn(c)) {
+            base + "\n\nВажно: никогда не говори, что действие выполнено, если ты не вызвал инструмент " +
+                "в этом же ответе. Даже если ты уже делал это раньше, вызывай инструмент заново при каждой " +
+                "просьбе. Если инструмент вернул ошибку, скажи об ошибке."
+        } else {
+            base + "\n\nСейчас инструменты управления телефоном отключены: ты не можешь включать фонарик, " +
+                "ставить будильники, звонить и открывать приложения. Если просят о таком, честно скажи, " +
+                "что инструменты отключены в настройках, и не утверждай, что что-то сделал."
+        }
+    }
 }
