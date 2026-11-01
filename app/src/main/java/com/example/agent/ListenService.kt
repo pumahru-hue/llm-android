@@ -29,7 +29,9 @@ object ListenState { val on = MutableStateFlow(false) }
 /** Слушает микрофон, ищет имя ассистента (Vosk), команду отдаёт в единый чат. */
 class ListenService : Service() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> Chat.note("⚠ Сбой: $e") }
+    )
     private var wake: PowerManager.WakeLock? = null
     private var loop: Job? = null
     private var speaker: Speaker? = null
@@ -203,10 +205,12 @@ class ListenService : Service() {
                 var t = 0
                 while (sp.isSpeaking() && t < 600) { delay(200); t++ }   // до 2 минут
                 delay(800)
+            } catch (t: CancellationException) {
+                throw t
+            } catch (t: Throwable) {
+                Chat.note("⚠ Сбой обработки: $t")
             } finally {
                 needReset = true
-                busy = false
-            }
         }
     }
 
