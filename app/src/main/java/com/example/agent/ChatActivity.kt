@@ -193,6 +193,7 @@ class ChatActivity : AppCompatActivity() {
         if (!::subtitle.isInitialized) return
         val sb = StringBuilder()
         sb.append(modelStatus.ifBlank { "Модель: запуск…" })
+        sb.append(if (Settings.toolsOn(this)) " · 🔧 вкл" else " · 🔧 выкл")
         if (busyNow) sb.append(" · думаю…")
         sb.append("\nконтекст ≈ ${Chat.usage.value} / ${Settings.ctxBudget(this)} ток.")
         val heard = Level.heard.value
