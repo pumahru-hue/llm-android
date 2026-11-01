@@ -21,7 +21,7 @@ class PhoneTools(private val ctx: Context) : ToolSet {
 
     /** Вызов инструмента виден в чате отдельной серой строкой. */
     private fun log(s: String) {
-        ChatStore.add(ChatMsg(ChatStore.newId(), "tool", "🔧 $s", inCtx = false))
+        runCatching { ChatStore.add(ChatMsg(ChatStore.newId(), "tool", "🔧 $s", inCtx = false)) }
     }
 
     private fun launch(i: Intent): Map<String, Any> = try {
