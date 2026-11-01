@@ -61,14 +61,14 @@ class ChatActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = Ui.dp(this, v)
 
-    private fun iconBtn(res: Int, desc: String, bg: Int? = null, onClick: () -> Unit) = ImageButton(this).apply {
+    private fun iconBtn(res: Int, desc: String, bg: Int? = null, onClick: (android.view.View) -> Unit) = ImageButton(this).apply {
         setImageResource(res)
         setColorFilter(Color.WHITE)
         contentDescription = desc
         scaleType = ImageView.ScaleType.CENTER_INSIDE
         if (bg != null) background = Ui.rounded(bg, dp(14).toFloat()) else setBackgroundColor(Color.TRANSPARENT)
         setPadding(dp(10), dp(10), dp(10), dp(10))
-        setOnClickListener { onClick() }
+        setOnClickListener { onClick(it) }
     }
 
     override fun onCreate(s: Bundle?) {
