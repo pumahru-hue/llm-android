@@ -1,5 +1,6 @@
 package com.example.agent
 
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -8,11 +9,16 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Минимальный клиент MCP по Streamable HTTP (редакции 2025-03-26 … 2025-11-25):
- * initialize -> notifications/initialized -> tools/list, tools/call.
+ * Клиент MCP. Сам определяет, на каком варианте протокола говорит сервер:
+ *  1) MODERN   — редакция 2026-07-28: без initialize и сессий, метаданные в каждом запросе;
+ *  2) STATEFUL — редакции 2025-03-26 … 2025-11-25: initialize, заголовок Mcp-Session-Id;
+ *  3) SSE      — устаревший HTTP+SSE (2024-11-05): GET-поток «endpoint» + POST-сообщения.
  */
 class McpClient(val name: String, private val url: String, private val headers: Map<String, String>) {
 
@@ -23,35 +29,37 @@ class McpClient(val name: String, private val url: String, private val headers: 
         val readOnly: Boolean?,
     )
 
-    private var session: String? = null
-    private var version = PROTOCOL
-    private var inited = false
-    private val ids = AtomicInteger(1)
+    private enum class Mode { NONE, MODERN, STATEFUL, SSE }
+    private class Resp(val code: Int, val text: String, val session: String?)
 
-    @Synchronized
-    fun ensureInit() {
-        if (inited) return
-        val params = JSONObject()
-            .put("protocolVersion", PROTOCOL)
-            .put("capabilities", JSONObject())
-            .put("clientInfo", JSONObject().put("name", "AgentPhone").put("version", "0.3"))
-        val res = rpc("initialize", params, notification = false, allowReinit = false)
-        res?.optString("protocolVersion")?.takeIf { it.isNotBlank() }?.let { version = it }
-        inited = true
-        rpc("notifications/initialized", null, notification = true, allowReinit = false)
-    }
+    private var mode = Mode.NONE
+    private var version = "2025-06-18"
+    private var session: String? = null
+    private var link: SseLink? = null
+    private val ids = AtomicInteger(1)
+    private val diag = StringBuilder()
+
+    /** Какой вариант выбран (показывается в настройках). */
+    val modeName: String
+        get() = when (mode) {
+            Mode.MODERN -> "протокол $MODERN"
+            Mode.STATEFUL -> "протокол $version"
+            Mode.SSE -> "протокол 2024-11-05 (HTTP+SSE)"
+            Mode.NONE -> "?"
+        }
+
+    // ---------- публичное ----------
 
     @Synchronized
     fun listTools(): List<ToolInfo> {
-        ensureInit()
+        ensure()
         val out = ArrayList<ToolInfo>()
         var cursor: String? = null
         var pages = 0
         do {
             val params = JSONObject()
             if (cursor != null) params.put("cursor", cursor)
-            val res = rpc("tools/list", params, notification = false, allowReinit = true)
-                ?: throw IOException("пустой ответ tools/list")
+            val res = call("tools/list", params)
             val arr = res.optJSONArray("tools") ?: JSONArray()
             for (i in 0 until arr.length()) {
                 val t = arr.getJSONObject(i)
@@ -71,11 +79,10 @@ class McpClient(val name: String, private val url: String, private val headers: 
     }
 
     @Synchronized
-    fun callTool(tool: String, args: JSONObject): String {
-        ensureInit()
+    fun callTool(tool: String, args: JSONObject, schema: JSONObject?): String {
+        ensure()
         val params = JSONObject().put("name", tool).put("arguments", args)
-        val res = rpc("tools/call", params, notification = false, allowReinit = true)
-            ?: throw IOException("пустой ответ tools/call")
+        val res = call("tools/call", params, tool, schema, args)
         val sb = StringBuilder()
         val content = res.optJSONArray("content")
         if (content != null) {
@@ -94,19 +101,204 @@ class McpClient(val name: String, private val url: String, private val headers: 
         return if (res.optBoolean("isError")) "Ошибка инструмента: $text" else text
     }
 
-    private fun reset() {
+    @Synchronized
+    fun close() {
+        link?.close()
+        link = null
+        mode = Mode.NONE
         session = null
-        inited = false
-        version = PROTOCOL
     }
 
-    private fun rpc(method: String, params: JSONObject?, notification: Boolean, allowReinit: Boolean): JSONObject? {
-        val id = if (notification) null else ids.getAndIncrement()
-        val body = JSONObject().put("jsonrpc", "2.0").put("method", method)
-        if (params != null) body.put("params", params)
-        if (id != null) body.put("id", id)
+    // ---------- выбор варианта протокола ----------
 
-        val c = URL(url).openConnection() as HttpURLConnection
+    private fun ensure() {
+        if (mode != Mode.NONE) return
+        diag.setLength(0)
+        detect()
+    }
+
+    private fun authError(code: Int) =
+        IOException("HTTP $code: нужна авторизация (добавьте заголовок Authorization в headers)")
+
+    private fun info() = JSONObject().put("name", "AgentPhone").put("version", "0.3")
+
+    private fun detect() {
+        // 1) современный вариант без сессий
+        val id = ids.getAndIncrement()
+        val body = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", "tools/list")
+            .put("params", withMeta(JSONObject()))
+        val r = http(body, mapOf("MCP-Protocol-Version" to MODERN, "Mcp-Method" to "tools/list"), id)
+        diag.append("современный: HTTP ${r.code} ${r.text.take(120).replace('\n', ' ')}; ")
+        if (r.code == 401 || r.code == 403) throw authError(r.code)
+        val msg = findResponse(r.text, id)
+        if (r.code in 200..299 && msg != null && msg.has("result")) { mode = Mode.MODERN; return }
+
+        val err = msg?.optJSONObject("error")
+        val supported = err?.optJSONObject("data")?.optJSONArray("supported")
+        if (r.code == 400 && err != null && (supported != null || err.optInt("code") == -32020)) {
+            val list = (0 until (supported?.length() ?: 0)).map { supported!!.optString(it) }
+            val old = list.firstOrNull { it in LEGACY }
+            if (old != null && tryStateful(old)) { mode = Mode.STATEFUL; return }
+            throw IOException("сервер поддерживает версии протокола: ${list.joinToString().ifEmpty { "неизвестно" }}; " +
+                "клиент знает $MODERN и ${LEGACY.joinToString()}. ${err.optString("message")}")
+        }
+
+        // 2) версии с initialize и сессией
+        if (tryStateful("2025-06-18")) { mode = Mode.STATEFUL; return }
+
+        // 3) устаревший HTTP+SSE
+        trySse()
+        mode = Mode.SSE
+    }
+
+    private fun tryStateful(first: String): Boolean {
+        var v = first
+        for (attempt in 0..1) {
+            val id = ids.getAndIncrement()
+            val params = JSONObject().put("protocolVersion", v)
+                .put("capabilities", JSONObject()).put("clientInfo", info())
+            val body = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", "initialize").put("params", params)
+            val r = http(body, emptyMap(), id)
+            diag.append("initialize($v): HTTP ${r.code} ${r.text.take(120).replace('\n', ' ')}; ")
+            if (r.code == 401 || r.code == 403) throw authError(r.code)
+            val msg = findResponse(r.text, id)
+            val res = msg?.optJSONObject("result")
+            if (r.code in 200..299 && res != null) {
+                version = res.optString("protocolVersion", v).ifBlank { v }
+                session = r.session
+                http(JSONObject().put("jsonrpc", "2.0").put("method", "notifications/initialized"),
+                    statefulHeaders(), null)
+                return true
+            }
+            val err = msg?.optJSONObject("error")
+            val supported = err?.optJSONObject("data")?.optJSONArray("supported")
+            if (attempt == 0 && supported != null) {
+                val pick = (0 until supported.length()).map { supported.optString(it) }.firstOrNull { it in LEGACY }
+                if (pick != null && pick != v) { v = pick; continue }
+            }
+            return false
+        }
+        return false
+    }
+
+    private fun trySse() {
+        val l = SseLink()
+        l.open()
+        try {
+            l.ready.get(15, TimeUnit.SECONDS)
+        } catch (e: Throwable) {
+            l.close()
+            val why = e.cause?.message ?: e.message
+            throw IOException("не удалось определить протокол MCP. $diag GET: $why")
+        }
+        val res = l.request("initialize", JSONObject().put("protocolVersion", "2024-11-05")
+            .put("capabilities", JSONObject()).put("clientInfo", info()), false)
+        if (res == null) { l.close(); throw IOException("HTTP+SSE: нет ответа на initialize") }
+        l.request("notifications/initialized", null, true)
+        link = l
+    }
+
+    // ---------- вызовы ----------
+
+    private fun call(
+        method: String,
+        params: JSONObject,
+        toolName: String? = null,
+        schema: JSONObject? = null,
+        args: JSONObject? = null,
+    ): JSONObject = when (mode) {
+        Mode.MODERN -> modernCall(method, params, toolName, schema, args)
+        Mode.STATEFUL -> statefulCall(method, params, true)
+        Mode.SSE -> link?.request(method, params, false) ?: throw IOException("поток SSE не открыт")
+        Mode.NONE -> throw IOException("соединение не установлено")
+    }
+
+    private fun modernCall(method: String, params: JSONObject, toolName: String?, schema: JSONObject?, args: JSONObject?): JSONObject {
+        val id = ids.getAndIncrement()
+        val body = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", method)
+            .put("params", withMeta(params))
+        val h = LinkedHashMap<String, String>()
+        h["MCP-Protocol-Version"] = MODERN
+        h["Mcp-Method"] = method
+        if (toolName != null) h["Mcp-Name"] = hv(toolName)
+        if (schema != null && args != null) h.putAll(paramHeaders(schema, args))
+        return result(http(body, h, id), id)
+    }
+
+    private fun statefulHeaders(): Map<String, String> {
+        val h = LinkedHashMap<String, String>()
+        h["MCP-Protocol-Version"] = version
+        session?.let { h["Mcp-Session-Id"] = it }
+        return h
+    }
+
+    private fun statefulCall(method: String, params: JSONObject, retry: Boolean): JSONObject {
+        val id = ids.getAndIncrement()
+        val body = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", method).put("params", params)
+        val r = http(body, statefulHeaders(), id)
+        if (r.code == 404 && session != null && retry) {      // сессия истекла
+            session = null
+            if (!tryStateful(version)) throw IOException("сессия истекла, переподключиться не удалось")
+            return statefulCall(method, params, false)
+        }
+        return result(r, id)
+    }
+
+    private fun result(r: Resp, id: Int): JSONObject {
+        if (r.code == 401 || r.code == 403) throw authError(r.code)
+        val msg = findResponse(r.text, id)
+        if (msg != null) {
+            msg.optJSONObject("error")?.let { throw IOException("MCP: ${it.optString("message", it.toString())}") }
+            val res = msg.optJSONObject("result") ?: JSONObject()
+            if (res.has("inputRequests")) throw IOException("инструмент запросил ввод от клиента (MRTR), это не поддерживается")
+            return res
+        }
+        throw IOException("HTTP ${r.code} ${r.text.take(200)}".trim())
+    }
+
+    // ---------- вспомогательное ----------
+
+    private fun withMeta(p: JSONObject): JSONObject {
+        val meta = p.optJSONObject("_meta") ?: JSONObject()
+        meta.put("io.modelcontextprotocol/protocolVersion", MODERN)
+        meta.put("io.modelcontextprotocol/clientInfo", info())
+        meta.put("io.modelcontextprotocol/clientCapabilities", JSONObject())
+        p.put("_meta", meta)
+        return p
+    }
+
+    /** Значение заголовка: обычный ASCII как есть, иначе base64 по правилам спецификации. */
+    private fun hv(v: String): String {
+        val plain = v.all { it.code in 0x20..0x7E } && v == v.trim() &&
+            !(v.startsWith("=?base64?") && v.endsWith("?="))
+        return if (plain) v else "=?base64?" + Base64.encodeToString(v.toByteArray(Charsets.UTF_8), Base64.NO_WRAP) + "?="
+    }
+
+    /** Параметры инструмента, помеченные x-mcp-header, дублируются в заголовки Mcp-Param-*. */
+    private fun paramHeaders(schema: JSONObject, args: JSONObject): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        fun walk(s: JSONObject, a: JSONObject?) {
+            val props = s.optJSONObject("properties") ?: return
+            for (k in props.keys()) {
+                val p = props.optJSONObject(k) ?: continue
+                val v = a?.opt(k)
+                val h = p.optString("x-mcp-header", "")
+                if (h.isNotEmpty() && v != null && v != JSONObject.NULL) {
+                    when (v) {
+                        is String -> out["Mcp-Param-$h"] = hv(v)
+                        is Int, is Long -> out["Mcp-Param-$h"] = v.toString()
+                        is Boolean -> out["Mcp-Param-$h"] = v.toString()
+                    }
+                }
+                if (p.optString("type") == "object") walk(p, v as? JSONObject)
+            }
+        }
+        walk(schema, args)
+        return out
+    }
+
+    private fun http(body: JSONObject, extra: Map<String, String>, id: Int?, target: String = url): Resp {
+        val c = URL(target).openConnection() as HttpURLConnection
         try {
             c.requestMethod = "POST"
             c.connectTimeout = 15_000
@@ -114,37 +306,20 @@ class McpClient(val name: String, private val url: String, private val headers: 
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             c.setRequestProperty("Accept", "application/json, text/event-stream")
-            if (method != "initialize") c.setRequestProperty("MCP-Protocol-Version", version)
-            session?.let { c.setRequestProperty("Mcp-Session-Id", it) }
+            extra.forEach { (k, v) -> c.setRequestProperty(k, v) }
             headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
             c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
 
             val code = c.responseCode
-            if (method == "initialize") c.getHeaderField("Mcp-Session-Id")?.let { session = it }
-
-            if (code == 404 && session != null && allowReinit) {
-                // сессия истекла: начинаем заново и повторяем запрос один раз
-                reset()
-                ensureInit()
-                return rpc(method, params, notification, allowReinit = false)
-            }
-            if (code == 202 || (notification && code in 200..299)) return null
-            if (code !in 200..299) {
-                val err = c.errorStream?.bufferedReader()?.readText()?.take(300).orEmpty()
-                val hint = if (code == 401 || code == 403)
-                    " (нужна авторизация: добавьте заголовок Authorization в headers)" else ""
-                throw IOException("HTTP $code$hint $err".trim())
-            }
-
+            val sess = c.getHeaderField("Mcp-Session-Id")
+            val stream: InputStream? = if (code in 200..299) c.inputStream else c.errorStream
             val ctype = c.contentType.orEmpty()
-            val text = if (ctype.contains("text/event-stream")) readSse(c.inputStream, id)
-            else c.inputStream.bufferedReader().readText()
-
-            val msg = findResponse(text, id) ?: throw IOException("нет ответа на $method")
-            msg.optJSONObject("error")?.let {
-                throw IOException("MCP: ${it.optString("message", it.toString())}")
+            val text = when {
+                stream == null -> ""
+                ctype.contains("text/event-stream") -> readSse(stream, id)
+                else -> stream.bufferedReader().readText()
             }
-            return msg.optJSONObject("result")
+            return Resp(code, text, sess)
         } finally {
             c.disconnect()
         }
@@ -188,8 +363,99 @@ class McpClient(val name: String, private val url: String, private val headers: 
         }
     }
 
+    // ---------- устаревший HTTP+SSE ----------
+
+    private inner class SseLink {
+        private val pending = ConcurrentHashMap<Int, CompletableFuture<JSONObject>>()
+        val ready = CompletableFuture<String>()
+        @Volatile private var alive = true
+        @Volatile private var conn: HttpURLConnection? = null
+
+        fun open() {
+            val t = Thread {
+                try {
+                    val c = URL(url).openConnection() as HttpURLConnection
+                    conn = c
+                    c.connectTimeout = 15_000
+                    c.readTimeout = 0
+                    c.setRequestProperty("Accept", "text/event-stream")
+                    headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
+                    val code = c.responseCode
+                    if (code !in 200..299) throw IOException("HTTP $code")
+                    BufferedReader(InputStreamReader(c.inputStream, Charsets.UTF_8)).use { r ->
+                        var event = "message"
+                        val data = StringBuilder()
+                        while (alive) {
+                            val line = r.readLine() ?: break
+                            when {
+                                line.isEmpty() -> {
+                                    if (data.isNotEmpty()) dispatch(event, data.toString())
+                                    event = "message"
+                                    data.setLength(0)
+                                }
+                                line.startsWith("event:") -> event = line.removePrefix("event:").trim()
+                                line.startsWith("data:") -> {
+                                    if (data.isNotEmpty()) data.append('\n')
+                                    data.append(line.removePrefix("data:").trim())
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Throwable) {
+                    if (!ready.isDone) ready.completeExceptionally(e)
+                } finally {
+                    alive = false
+                    if (!ready.isDone) ready.completeExceptionally(IOException("поток закрыт без endpoint"))
+                    pending.values.forEach { it.completeExceptionally(IOException("поток SSE закрыт")) }
+                }
+            }
+            t.isDaemon = true
+            t.start()
+        }
+
+        private fun dispatch(event: String, data: String) {
+            if (event == "endpoint") {
+                if (!ready.isDone) ready.complete(URL(URL(url), data.trim()).toString())
+            } else {
+                val o = try { JSONObject(data) } catch (_: Throwable) { return }
+                if (o.has("id") && (o.has("result") || o.has("error"))) pending.remove(o.optInt("id"))?.complete(o)
+            }
+        }
+
+        fun request(method: String, params: JSONObject?, notification: Boolean): JSONObject? {
+            val ep = ready.getNow(null) ?: throw IOException("нет endpoint")
+            if (!alive) throw IOException("поток SSE закрыт")
+            val id = if (notification) null else ids.getAndIncrement()
+            val body = JSONObject().put("jsonrpc", "2.0").put("method", method)
+            if (params != null) body.put("params", params)
+            if (id != null) body.put("id", id)
+            val fut = if (id != null) CompletableFuture<JSONObject>().also { pending[id] = it } else null
+
+            val r = http(body, emptyMap(), null, ep)
+            if (r.code !in 200..299) {
+                if (id != null) pending.remove(id)
+                throw IOException("HTTP ${r.code} ${r.text.take(200)}".trim())
+            }
+            if (fut == null) return null
+            val msg = try {
+                fut.get(TIMEOUT.toLong(), TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                pending.remove(id)
+                throw IOException("нет ответа по SSE: ${e.cause?.message ?: e.message}")
+            }
+            msg.optJSONObject("error")?.let { throw IOException("MCP: ${it.optString("message", it.toString())}") }
+            return msg.optJSONObject("result") ?: JSONObject()
+        }
+
+        fun close() {
+            alive = false
+            runCatching { conn?.disconnect() }
+        }
+    }
+
     companion object {
-        const val PROTOCOL = "2025-06-18"
+        const val MODERN = "2026-07-28"
+        val LEGACY = listOf("2025-11-25", "2025-06-18", "2025-03-26")
         const val TIMEOUT = 25_000
     }
 }
