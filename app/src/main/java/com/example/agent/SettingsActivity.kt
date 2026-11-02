@@ -1,6 +1,7 @@
 package com.example.agent
 
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
 import android.text.InputType
@@ -25,9 +26,10 @@ class SettingsActivity : AppCompatActivity() {
         title = when (page) {
             "activation" -> "Активация"
             "voice" -> "Озвучка ответов"
-            "model" -> "Модель"
+            "model" -> "Модель и инструменты"
             "prompt" -> "Системный промпт"
             "context" -> "Контекст чата"
+            "mcp" -> "MCP-серверы"
             else -> "Настройки"
         }
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
@@ -44,6 +46,7 @@ class SettingsActivity : AppCompatActivity() {
             "model" -> pageModel()
             "prompt" -> pagePrompt()
             "context" -> pageContext()
+            "mcp" -> pageMcp()
             else -> pageHome()
         }
     }
@@ -60,12 +63,12 @@ class SettingsActivity : AppCompatActivity() {
     private fun pageHome() {
         nav("Активация (кнопка или имя)", "activation")
         nav("Озвучка ответов", "voice")
-        nav("Модель", "model")
+        nav("Модель и инструменты", "model")
         nav("Системный промпт", "prompt")
         nav("Контекст чата", "context")
+        nav("MCP-серверы (JSON)", "mcp")
         button(batteryLabel()) { AgentService.requestIgnoreBattery(this) }
         hint("Готовится в следующих этапах:")
-        soon("MCP-серверы (JSON)")
         soon("События: SMS и звонки")
         soon("Камеры")
         soon("Задачи по расписанию")
@@ -89,7 +92,23 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun pageModel() {
-        val st = TextView(this).apply { textSize = 15f; setPadding(0, dp(8), 0, dp(8)) }
+        col.addView(CheckBox(this).apply {
+            text = "Встроенные инструменты телефона (будильник, фонарик, звонки…)"
+            isChecked = Settings.toolsOn(this@SettingsActivity)
+            setOnCheckedChangeListener { _, on ->
+                Settings.put(this@SettingsActivity, Settings.TOOLS_ON, if (on) 1 else 0)
+                AgentRuntime.invalidate(this@SettingsActivity)
+            }
+        })
+        hint("Способ подключения инструментов. «OpenAPI» — новый путь (рекомендуется), «Kotlin» — прежний. " +
+            "Если одно из двух падает, переключитесь на другое.")
+        radio(Settings.TOOLS_IMPL, listOf(
+            "openapi" to "OpenAPI (JSON-описания)",
+            "kotlin" to "Kotlin-функции (прежний)"), "openapi") {
+            AgentRuntime.invalidate(this)
+        }
+
+        val st = TextView(this).apply { textSize = 15f; setPadding(0, dp(12), 0, dp(8)) }
         col.addView(st)
         lifecycleScope.launch { DownloadState.text.collect { st.text = it.ifBlank { "…" } } }
         val f = AgentRuntime.host(this).modelFile
@@ -100,7 +119,8 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun pagePrompt() {
-        hint("Системная инструкция модели. Изменения сохраняются сразу, диалог пересоберётся.")
+        hint("Системная инструкция модели. Изменения сохраняются сразу, диалог пересоберётся. " +
+            "К ней приложение само добавляет правила про инструменты.")
         edit("Промпт", Settings.PROMPT, Settings.DEFAULT_PROMPT, multiline = true)
         button("Сбросить к умолчанию") {
             Settings.put(this, Settings.PROMPT, Settings.DEFAULT_PROMPT)
@@ -125,6 +145,84 @@ class SettingsActivity : AppCompatActivity() {
             "бледными, но модель их больше не видит.")
     }
 
+    private fun pageMcp() {
+        val ctx = this
+        hint("Удалённые MCP-серверы по HTTP (Streamable HTTP, редакции 2025-03-26 … 2025-11-25). " +
+            "Формат как в Claude Desktop: имя → url и, если нужно, headers. Серверы, которые запускаются " +
+            "локально через npx или uvx, на телефоне не работают. Для адресов http:// в локальной сети " +
+            "разрешён открытый трафик.")
+
+        val et = EditText(this).apply {
+            setText(Settings.str(ctx, McpManager.KEY_JSON, McpManager.EXAMPLE))
+            typeface = Typeface.MONOSPACE
+            textSize = 12f
+            minLines = 10
+            gravity = Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            addTextChangedListener(watcher { Settings.put(ctx, McpManager.KEY_JSON, it) })
+        }
+        col.addView(et)
+
+        val status = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        button("Проверить и загрузить инструменты") {
+            status.text = "Подключаюсь…"
+            lifecycleScope.launch {
+                val st = McpManager.refresh(ctx)
+                status.text = if (st.isEmpty()) "В JSON нет серверов" else
+                    st.joinToString("\n") { (if (it.ok) "✓ " else "✗ ") + it.server + ": " + it.message }
+                renderMcpTools(box)
+                AgentRuntime.invalidate(ctx)
+            }
+        }
+        button("Вставить пример") { et.setText(McpManager.EXAMPLE) }
+        col.addView(status)
+        col.addView(box)
+        renderMcpTools(box)
+    }
+
+    private fun renderMcpTools(box: LinearLayout) {
+        box.removeAllViews()
+        val recs = McpManager.saved(this)
+        if (recs.isEmpty()) {
+            box.addView(TextView(this).apply {
+                text = "Инструментов пока нет. Нажмите «Проверить и загрузить»."
+                alpha = 0.7f
+            })
+            return
+        }
+        box.addView(TextView(this).apply {
+            text = "Инструменты. По умолчанию включены только помеченные сервером как «только чтение»; " +
+                "остальные включайте осознанно: они могут менять данные."
+            textSize = 13f
+            setPadding(0, dp(8), 0, dp(4))
+            alpha = 0.8f
+        })
+        val footer = TextView(this).apply { textSize = 13f; setPadding(0, dp(8), 0, 0) }
+        fun updateFooter() {
+            val n = McpManager.tools(this@SettingsActivity).size
+            footer.text = "Включено: $n (максимум ${McpManager.MAX_TOOLS}). " +
+                "Описания займут ≈ ${McpManager.tokenCost(this@SettingsActivity)} токенов контекста."
+        }
+        for (r in recs) {
+            val tag = when (r.readOnly) { true -> "👁 чтение"; false -> "⚠ изменяет"; null -> "? не указано" }
+            box.addView(CheckBox(this).apply {
+                text = "${r.server} · ${r.name}  [$tag]\n${r.description.take(100)}"
+                textSize = 13f
+                isChecked = McpManager.isEnabled(this@SettingsActivity, r)
+                setOnCheckedChangeListener { _, on ->
+                    McpManager.setEnabled(this@SettingsActivity, r, on)
+                    AgentRuntime.invalidate(this@SettingsActivity)
+                    updateFooter()
+                }
+            })
+        }
+        box.addView(footer)
+        updateFooter()
+    }
+
     // ---------- элементы ----------
 
     private fun batteryLabel(): String {
@@ -132,7 +230,13 @@ class SettingsActivity : AppCompatActivity() {
         return if (pm.isIgnoringBatteryOptimizations(packageName)) "Экономия батареи: отключена ✓"
         else "Отключить экономию батареи (рекомендуется)"
     }
-    
+
+    private fun watcher(onChange: (String) -> Unit) = object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+        override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+        override fun afterTextChanged(s: Editable?) { onChange(s?.toString() ?: "") }
+    }
+
     private fun hint(t: String) {
         col.addView(TextView(this).apply {
             text = t
@@ -162,7 +266,7 @@ class SettingsActivity : AppCompatActivity() {
         })
     }
 
-    private fun radio(key: String, options: List<Pair<String, String>>, def: String) {
+    private fun radio(key: String, options: List<Pair<String, String>>, def: String, after: () -> Unit = {}) {
         val cur = Settings.str(this, key, def)
         val g = RadioGroup(this)
         options.forEachIndexed { i, (value, label) ->
@@ -172,7 +276,10 @@ class SettingsActivity : AppCompatActivity() {
                 isChecked = value == cur
             })
         }
-        g.setOnCheckedChangeListener { _, id -> Settings.put(this, key, options[id - 1000].first) }
+        g.setOnCheckedChangeListener { _, id ->
+            Settings.put(this, key, options[id - 1000].first)
+            after()
+        }
         col.addView(g)
     }
 
@@ -187,13 +294,8 @@ class SettingsActivity : AppCompatActivity() {
                 minLines = 8
                 gravity = Gravity.TOP
             }
-            addTextChangedListener(object : TextWatcher {
-                override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
-                override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
-                override fun afterTextChanged(s: Editable?) {
-                    val t = s?.toString() ?: ""
-                    if (number) t.toIntOrNull()?.let { Settings.put(ctx, key, it) } else Settings.put(ctx, key, t)
-                }
+            addTextChangedListener(watcher { t ->
+                if (number) t.toIntOrNull()?.let { Settings.put(ctx, key, it) } else Settings.put(ctx, key, t)
             })
         })
     }

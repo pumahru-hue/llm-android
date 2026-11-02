@@ -53,7 +53,13 @@ class ModelHost(private val ctx: Context) {
     )
 
     private fun createConv(e: Engine, initial: List<Message>): Conversation {
-        val toolList = if (Settings.toolsOn(ctx)) listOf(tool(PhoneTools(ctx))) else emptyList()
+        val mcp = McpManager.tools(ctx).map { tool(it) }
+        val phone = when {
+            !Settings.toolsOn(ctx) -> emptyList()
+            Settings.toolsImpl(ctx) == "kotlin" -> listOf(tool(PhoneTools(ctx)))
+            else -> ToolRegistry.builtin(ctx).map { tool(it) }
+        }
+        val toolList = phone + mcp
         val prompt = Contents.of(Settings.effectivePrompt(ctx))
         val sampler = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7)
         val cfg = if (initial.isEmpty()) {
@@ -110,7 +116,7 @@ object AgentRuntime {
     fun host(ctx: Context): ModelHost =
         host ?: synchronized(this) { host ?: ModelHost(ctx.applicationContext).also { host = it } }
 
-    /** Промпт или настройки изменились: диалог модели надо пересобрать. */
+    /** Промпт, инструменты или настройки изменились: диалог модели надо пересобрать. */
     fun invalidate(ctx: Context) {
         val app = ctx.applicationContext
         CoroutineScope(Dispatchers.Default).launch { host(app).dropConversation() }

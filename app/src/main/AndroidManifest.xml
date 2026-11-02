@@ -23,6 +23,7 @@
         android:name=".App"
         android:label="Agent"
         android:largeHeap="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.AppCompat.DayNight">
 
         <uses-native-library android:name="libvndksupport.so" android:required="false"/>
