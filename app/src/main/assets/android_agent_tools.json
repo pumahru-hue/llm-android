@@ -1,0 +1,1176 @@
+[
+ {
+  "name": "android_ping",
+  "description": "Проверить доступность Android-агента. Возвращает имя и версию.",
+  "method": "GET",
+  "path": "/ping",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_device_info",
+  "description": "Информация об устройстве: модель, версия Android, батарея, экран.",
+  "method": "GET",
+  "path": "/device/info",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_battery",
+  "description": "Уровень заряда батареи (percent), заряжается ли, источник питания, температура, напряжение, состояние.",
+  "method": "GET",
+  "path": "/battery",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_status",
+  "description": "Сводка готовности агента: какие доступы активны (accessibility, захват экрана, уведомления) и какие runtime-разрешения выданы. Вызови первым, чтобы понять, что доступно перед действиями.",
+  "method": "GET",
+  "path": "/status",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": true
+ },
+ {
+  "name": "android_toast",
+  "description": "Показать всплывающее сообщение (toast) на экране телефона.",
+  "method": "POST",
+  "path": "/toast",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Текст для показа на экране"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_speak",
+  "description": "Озвучить текст вслух через синтезатор речи телефона (TTS).",
+  "method": "POST",
+  "path": "/speak",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Текст для озвучивания"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_ui_dump",
+  "description": "Прочитать экран: элементы с текстом и координатами центра (cx,cy) для тапа. only_clickable=true — только кликабельные/поля (компактнее). limit — макс. элементов (по умолчанию 100). Вызывай перед тапом, чтобы понять что на экране.",
+  "method": "GET",
+  "path": "/ui/dump",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "only_clickable": {
+     "type": "boolean",
+     "description": "Только кликабельные элементы и поля ввода"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Максимум элементов"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": true
+ },
+ {
+  "name": "android_tap",
+  "description": "Нажать (тап) по координатам экрана в пикселях.",
+  "method": "POST",
+  "path": "/ui/tap",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "x": {
+     "type": "integer",
+     "description": "X-координата в пикселях"
+    },
+    "y": {
+     "type": "integer",
+     "description": "Y-координата в пикселях"
+    }
+   },
+   "required": [
+    "x",
+    "y"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": true
+ },
+ {
+  "name": "android_swipe",
+  "description": "Свайп/прокрутка от точки (x1,y1) к (x2,y2). duration — длительность в мс (по умолчанию 300).",
+  "method": "POST",
+  "path": "/ui/swipe",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "x1": {
+     "type": "integer",
+     "description": "Начальная X"
+    },
+    "y1": {
+     "type": "integer",
+     "description": "Начальная Y"
+    },
+    "x2": {
+     "type": "integer",
+     "description": "Конечная X"
+    },
+    "y2": {
+     "type": "integer",
+     "description": "Конечная Y"
+    },
+    "duration": {
+     "type": "integer",
+     "description": "Длительность, мс (по умолчанию 300)"
+    }
+   },
+   "required": [
+    "x1",
+    "y1",
+    "x2",
+    "y2"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_input_text",
+  "description": "Ввести текст в активное (сфокусированное) поле ввода на экране.",
+  "method": "POST",
+  "path": "/ui/text",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Текст для ввода"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": true
+ },
+ {
+  "name": "android_click_text",
+  "description": "Найти на экране элемент по видимому тексту или описанию и нажать на него.",
+  "method": "POST",
+  "path": "/ui/click_text",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Видимый текст элемента (или его часть)"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": true
+ },
+ {
+  "name": "android_wait_text",
+  "description": "Дождаться появления элемента с текстом на экране (после действия/загрузки). Возвращает found и координаты. timeout — мс (по умолчанию 8000).",
+  "method": "POST",
+  "path": "/ui/wait_text",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Искомый текст"
+    },
+    "timeout": {
+     "type": "integer",
+     "description": "Таймаут ожидания, мс"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "read",
+  "defaultOn": true
+ },
+ {
+  "name": "android_scroll_to",
+  "description": "Прокрутить экран, пока не появится элемент с указанным текстом.",
+  "method": "POST",
+  "path": "/ui/scroll_to",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Текст элемента, к которому прокрутить"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_global_action",
+  "description": "Системное действие: back (Назад), home (Домой), recents (Недавние), notifications (Шторка), quicksettings (Быстрые настройки), lock (Заблокировать экран).",
+  "method": "POST",
+  "path": "/ui/global",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "action": {
+     "type": "string",
+     "description": "Действие",
+     "enum": [
+      "back",
+      "home",
+      "recents",
+      "notifications",
+      "quicksettings",
+      "lock"
+     ]
+    }
+   },
+   "required": [
+    "action"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": true
+ },
+ {
+  "name": "android_screenshot",
+  "description": "Сделать скриншот экрана телефона (JPEG). scale — масштаб 10-100% (по умолчанию 70), quality — качество 1-100 (по умолчанию 65). Используй, чтобы увидеть экран.",
+  "method": "GET",
+  "path": "/screen/shot",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "scale": {
+     "type": "integer",
+     "description": "Масштаб 10-100% (меньше = компактнее)"
+    },
+    "quality": {
+     "type": "integer",
+     "description": "Качество JPEG 1-100"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false,
+  "media": "image"
+ },
+ {
+  "name": "android_camera_photo",
+  "description": "Сделать фото камерой телефона и вернуть изображение (JPEG). lens: back (задняя, по умолчанию) или front (фронтальная).",
+  "method": "POST",
+  "path": "/camera/photo",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "lens": {
+     "type": "string",
+     "description": "Камера: back или front",
+     "enum": [
+      "back",
+      "front"
+     ]
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false,
+  "media": "image"
+ },
+ {
+  "name": "android_location",
+  "description": "Текущая геопозиция телефона: широта, долгота, точность, высота, скорость, и адрес (если доступен).",
+  "method": "GET",
+  "path": "/location",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_call_dial",
+  "description": "Позвонить по номеру или по имени контакта из телефонной книги. Укажи number (номер) ИЛИ contact (имя контакта).",
+  "method": "POST",
+  "path": "/call/dial",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "number": {
+     "type": "string",
+     "description": "Номер телефона"
+    },
+    "contact": {
+     "type": "string",
+     "description": "Имя контакта из книги"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_call_end",
+  "description": "Сбросить (завершить) текущий вызов.",
+  "method": "POST",
+  "path": "/call/end",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_call_answer",
+  "description": "Принять входящий вызов.",
+  "method": "POST",
+  "path": "/call/answer",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_call_log",
+  "description": "Журнал вызовов: номер, тип (incoming/outgoing/missed), дата, длительность.",
+  "method": "POST",
+  "path": "/call/log",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "limit": {
+     "type": "integer",
+     "description": "Сколько записей (по умолчанию 20)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sms_send",
+  "description": "Отправить SMS. Получатель: number (номер) ИЛИ contact (имя из книги). Текст: text. Обязательно укажи получателя и текст.",
+  "method": "POST",
+  "path": "/sms/send",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "number": {
+     "type": "string",
+     "description": "Номер получателя"
+    },
+    "contact": {
+     "type": "string",
+     "description": "Имя контакта из книги"
+    },
+    "text": {
+     "type": "string",
+     "description": "Текст сообщения"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sms_via_app",
+  "description": "Отправить SMS через штатное SMS-приложение (надёжно на кастомных прошивках/dual-SIM, где прямая отправка глючит): открывает приложение с текстом и жмёт «Отправить». Получатель: number или contact; текст: text.",
+  "method": "POST",
+  "path": "/sms/send_app",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "number": {
+     "type": "string",
+     "description": "Номер получателя"
+    },
+    "contact": {
+     "type": "string",
+     "description": "Имя контакта из книги"
+    },
+    "text": {
+     "type": "string",
+     "description": "Текст сообщения"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sms_list",
+  "description": "Прочитать SMS. box: inbox (входящие, по умолчанию) или sent (отправленные).",
+  "method": "POST",
+  "path": "/sms/list",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "box": {
+     "type": "string",
+     "enum": [
+      "inbox",
+      "sent"
+     ],
+     "description": "Ящик"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Сколько сообщений (по умолчанию 20)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_contacts",
+  "description": "Список/поиск контактов. query — фильтр по имени (необязательно).",
+  "method": "POST",
+  "path": "/contacts",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Фильтр по имени"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Сколько контактов (по умолчанию 50)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_contact_add",
+  "description": "Добавить новый контакт.",
+  "method": "POST",
+  "path": "/contacts/add",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Имя контакта"
+    },
+    "number": {
+     "type": "string",
+     "description": "Номер телефона"
+    }
+   },
+   "required": [
+    "name",
+    "number"
+   ]
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_contact_lookup",
+  "description": "Обратный поиск: по номеру телефона найти имя контакта из книги (кто звонил/писал).",
+  "method": "POST",
+  "path": "/contacts/lookup",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "number": {
+     "type": "string",
+     "description": "Номер телефона"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_contact_delete",
+  "description": "Удалить контакт(ы) по точному имени или номеру. Достаточно указать одно из полей. Возвращает число удалённых.",
+  "method": "POST",
+  "path": "/contacts/delete",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string",
+     "description": "Точное имя контакта"
+    },
+    "number": {
+     "type": "string",
+     "description": "Точный номер телефона"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_volume_get",
+  "description": "Текущая громкость по потокам (music/ring/alarm/notification/system/call).",
+  "method": "GET",
+  "path": "/system/volume",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_volume_set",
+  "description": "Установить громкость (percent 0-100). stream: music (по умолчанию), ring, alarm, notification, system, call.",
+  "method": "POST",
+  "path": "/system/volume",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "percent": {
+     "type": "integer",
+     "description": "Громкость 0-100"
+    },
+    "stream": {
+     "type": "string",
+     "enum": [
+      "music",
+      "ring",
+      "alarm",
+      "notification",
+      "system",
+      "call"
+     ],
+     "description": "Поток"
+    }
+   },
+   "required": [
+    "percent"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_brightness_set",
+  "description": "Установить яркость экрана (percent 0-100). Требует разрешения на изменение системных настроек.",
+  "method": "POST",
+  "path": "/system/brightness",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "percent": {
+     "type": "integer",
+     "description": "Яркость 0-100"
+    }
+   },
+   "required": [
+    "percent"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_clipboard_get",
+  "description": "Прочитать буфер обмена (на Android 10+ из фона может быть недоступно).",
+  "method": "GET",
+  "path": "/clipboard",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_clipboard_set",
+  "description": "Записать текст в буфер обмена.",
+  "method": "POST",
+  "path": "/clipboard",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "Текст для буфера обмена"
+    }
+   },
+   "required": [
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_notify_post",
+  "description": "Показать своё уведомление на телефоне.",
+  "method": "POST",
+  "path": "/notify/post",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "title": {
+     "type": "string",
+     "description": "Заголовок"
+    },
+    "text": {
+     "type": "string",
+     "description": "Текст уведомления"
+    }
+   },
+   "required": [
+    "title",
+    "text"
+   ]
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_notifications_list",
+  "description": "Прочитать активные уведомления системы (входящие сообщения, письма и т.д.). Требует доступа к уведомлениям.",
+  "method": "GET",
+  "path": "/notify/list",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sensors",
+  "description": "Снять показания основных датчиков разом: акселерометр, гироскоп, магнитометр, освещённость, приближение, давление, гравитация, и азимут компаса.",
+  "method": "GET",
+  "path": "/sensors",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sensors_list",
+  "description": "Список доступных на устройстве датчиков (имя, тип, производитель).",
+  "method": "GET",
+  "path": "/sensors/list",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_sensor_read",
+  "description": "Снять одно показание датчика. type: accelerometer, gyroscope, magnetometer, light, proximity, pressure, temperature, humidity, gravity, linear_acceleration, step_counter, rotation.",
+  "method": "POST",
+  "path": "/sensors/read",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "type": {
+     "type": "string",
+     "description": "Тип датчика",
+     "enum": [
+      "accelerometer",
+      "gyroscope",
+      "magnetometer",
+      "light",
+      "proximity",
+      "pressure",
+      "temperature",
+      "humidity",
+      "gravity",
+      "linear_acceleration",
+      "step_counter",
+      "rotation"
+     ]
+    }
+   },
+   "required": [
+    "type"
+   ]
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_net_info",
+  "description": "Тип соединения (wifi/cellular/ethernet), онлайн ли, локальный IP.",
+  "method": "GET",
+  "path": "/net/info",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_wifi_status",
+  "description": "Статус Wi-Fi: включён ли, SSID, BSSID, уровень сигнала, скорость, IP.",
+  "method": "GET",
+  "path": "/net/wifi",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_wifi_scan",
+  "description": "Сканировать доступные Wi-Fi сети (SSID, сигнал, частота, защита).",
+  "method": "GET",
+  "path": "/net/wifi/scan",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_bluetooth_status",
+  "description": "Статус Bluetooth: доступен, включён, имя адаптера.",
+  "method": "GET",
+  "path": "/net/bluetooth",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_bluetooth_paired",
+  "description": "Список спаренных Bluetooth-устройств.",
+  "method": "GET",
+  "path": "/net/bluetooth/paired",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_bluetooth_scan",
+  "description": "Найти Bluetooth-устройства поблизости (discovery). seconds 4-20 (по умолчанию 8).",
+  "method": "POST",
+  "path": "/net/bluetooth/scan",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "seconds": {
+     "type": "integer",
+     "description": "Длительность поиска, сек (4-20)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_flashlight",
+  "description": "Включить/выключить фонарик (вспышку). on=true включить, false выключить. Работает на всех версиях.",
+  "method": "POST",
+  "path": "/flashlight",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "on": {
+     "type": "boolean",
+     "description": "true — включить, false — выключить"
+    }
+   }
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_wifi_set",
+  "description": "Включить/выключить Wi-Fi (on=true/false). На Android 10+ без root откроет панель Wi-Fi (программно нельзя — ограничение Google); на старых/с root переключит сразу.",
+  "method": "POST",
+  "path": "/net/wifi/set",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "on": {
+     "type": "boolean",
+     "description": "true — включить"
+    }
+   }
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_bluetooth_set",
+  "description": "Включить/выключить Bluetooth (on=true/false). На Android 13+ без root — системный запрос/вручную.",
+  "method": "POST",
+  "path": "/net/bluetooth/set",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "on": {
+     "type": "boolean",
+     "description": "true — включить"
+    }
+   }
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_mobile_data",
+  "description": "Включить/выключить мобильные данные (on=true/false). Переключение возможно только с root.",
+  "method": "POST",
+  "path": "/net/mobile_data",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "on": {
+     "type": "boolean",
+     "description": "true — включить"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_http_request",
+  "description": "Выполнить HTTP-запрос с телефона (телефон как исполнитель). Возвращает статус, заголовки и тело ответа.",
+  "method": "POST",
+  "path": "/net/http",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "URL"
+    },
+    "method": {
+     "type": "string",
+     "description": "GET/POST/PUT/DELETE (по умолчанию GET)"
+    },
+    "headers": {
+     "type": "object",
+     "description": "Заголовки (ключ-значение)"
+    },
+    "body": {
+     "type": "string",
+     "description": "Тело запроса (для POST/PUT)"
+    }
+   },
+   "required": [
+    "url"
+   ]
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_mic_record",
+  "description": "Записать звук с микрофона (seconds 1-30, по умолчанию 5) и вернуть аудио (m4a/AAC).",
+  "method": "POST",
+  "path": "/mic/record",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "seconds": {
+     "type": "integer",
+     "description": "Длительность записи, сек (1-30)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false,
+  "media": "audio"
+ },
+ {
+  "name": "android_mic_recognize",
+  "description": "Распознать речь с микрофона в текст (если на устройстве есть распознавание). lang по умолчанию ru-RU.",
+  "method": "POST",
+  "path": "/mic/recognize",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "lang": {
+     "type": "string",
+     "description": "Язык, напр. ru-RU, en-US"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_launch_app",
+  "description": "Запустить приложение по названию или имени пакета (напр. 'Telegram' или 'org.telegram.messenger'). Открывает приложение на весь экран.",
+  "method": "POST",
+  "path": "/apps/launch",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "app": {
+     "type": "string",
+     "description": "Название приложения или пакет"
+    }
+   }
+  },
+  "risk": "act",
+  "defaultOn": true
+ },
+ {
+  "name": "android_open_url",
+  "description": "Открыть сайт/URL в браузере напрямую (надёжнее, чем тапать адресную строку). Напр. 'ya.ru' или 'https://ya.ru'. Используй это для перехода на сайты.",
+  "method": "POST",
+  "path": "/apps/open_url",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "url": {
+     "type": "string",
+     "description": "Адрес сайта (можно без https://)"
+    }
+   }
+  },
+  "risk": "act",
+  "defaultOn": false
+ },
+ {
+  "name": "android_close_app",
+  "description": "Закрыть/остановить приложение по названию или пакету. Без root — останавливает фоновые процессы; с root — полный force-stop.",
+  "method": "POST",
+  "path": "/apps/close",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "app": {
+     "type": "string",
+     "description": "Название приложения или пакет"
+    }
+   }
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_list_apps",
+  "description": "Список установленных приложений (название + пакет). query — фильтр по названию.",
+  "method": "POST",
+  "path": "/apps/list",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "query": {
+     "type": "string",
+     "description": "Фильтр по названию"
+    },
+    "limit": {
+     "type": "integer",
+     "description": "Сколько (по умолчанию 100)"
+    }
+   }
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_device_owner_status",
+  "description": "Статус Device Owner/Admin (системный уровень без root). Если device_owner=true — доступно управление Wi-Fi и пр. через DevicePolicyManager.",
+  "method": "GET",
+  "path": "/admin/status",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_su",
+  "description": "Выполнить shell-команду с правами root через su (только на рутованных устройствах). Возвращает exit, stdout, stderr.",
+  "method": "POST",
+  "path": "/su",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "command": {
+     "type": "string",
+     "description": "Команда shell"
+    },
+    "timeout": {
+     "type": "integer",
+     "description": "Таймаут, сек (по умолчанию 20)"
+    }
+   },
+   "required": [
+    "command"
+   ]
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_files_dirs",
+  "description": "Полезные каталоги: хранилище, Downloads, DCIM, Pictures, папки приложения.",
+  "method": "GET",
+  "path": "/files/dirs",
+  "schema": {
+   "type": "object",
+   "properties": {}
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_files_list",
+  "description": "Список файлов и папок в каталоге (имя, размер, дата, признак папки).",
+  "method": "POST",
+  "path": "/files/list",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Путь к каталогу"
+    }
+   },
+   "required": [
+    "path"
+   ]
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_file_read",
+  "description": "Прочитать файл. Возвращает size, base64 и text (если файл текстовый). Лимит 1 МБ.",
+  "method": "POST",
+  "path": "/files/read",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Путь к файлу"
+    }
+   },
+   "required": [
+    "path"
+   ]
+  },
+  "risk": "read",
+  "defaultOn": false
+ },
+ {
+  "name": "android_file_write",
+  "description": "Записать файл. content — текст; если base64=true, content декодируется из base64.",
+  "method": "POST",
+  "path": "/files/write",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Путь к файлу"
+    },
+    "content": {
+     "type": "string",
+     "description": "Содержимое (текст или base64)"
+    },
+    "base64": {
+     "type": "boolean",
+     "description": "content в base64 (для бинарных)"
+    }
+   },
+   "required": [
+    "path",
+    "content"
+   ]
+  },
+  "risk": "danger",
+  "defaultOn": false
+ },
+ {
+  "name": "android_file_delete",
+  "description": "Удалить файл или каталог (рекурсивно).",
+  "method": "POST",
+  "path": "/files/delete",
+  "schema": {
+   "type": "object",
+   "properties": {
+    "path": {
+     "type": "string",
+     "description": "Путь к файлу или каталогу"
+    }
+   },
+   "required": [
+    "path"
+   ]
+  },
+  "risk": "danger",
+  "defaultOn": false
+ }
+]

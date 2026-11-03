@@ -92,6 +92,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun pageModel() {
+        hint("Версия LiteRT-LM в этой сборке: ${BuildConfig.LITERT_VERSION}")
         col.addView(CheckBox(this).apply {
             text = "Встроенные инструменты телефона (будильник, фонарик, звонки…)"
             isChecked = Settings.toolsOn(this@SettingsActivity)
@@ -148,9 +149,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun pageMcp() {
         val ctx = this
         hint("Удалённые MCP-серверы по HTTP (Streamable HTTP, редакции 2025-03-26 … 2025-11-25). " +
-            "Формат как в Claude Desktop: имя → url и, если нужно, headers. Серверы, которые запускаются " +
-            "локально через npx или uvx, на телефоне не работают. Для адресов http:// в локальной сети " +
-            "разрешён открытый трафик.")
+            "Формат как в Claude Desktop: имя → url и, если нужно, headers. Android-агент (порт 8745, " +
+            "токен в X-Auth-Token) определяется автоматически. Серверы, которые запускаются локально " +
+            "через npx или uvx, на телефоне не работают. Для адресов http:// разрешён открытый трафик.")
 
         val et = EditText(this).apply {
             setText(Settings.str(ctx, McpManager.KEY_JSON, McpManager.EXAMPLE))
@@ -164,7 +165,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         col.addView(et)
 
-        val status = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+        val status = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)); setTextIsSelectable(true) }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         button("Проверить и загрузить инструменты") {
@@ -178,7 +179,18 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         button("Вставить пример") { et.setText(McpManager.EXAMPLE) }
+        val probeOut = TextView(this).apply {
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        button("Разведка: что отвечает адрес сервера") {
+            probeOut.text = "Опрашиваю…"
+            lifecycleScope.launch { probeOut.text = McpManager.probe(ctx) }
+        }
         col.addView(status)
+        col.addView(probeOut)
         col.addView(box)
         renderMcpTools(box)
     }
@@ -194,8 +206,9 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         box.addView(TextView(this).apply {
-            text = "Инструменты. По умолчанию включены только помеченные сервером как «только чтение»; " +
-                "остальные включайте осознанно: они могут менять данные."
+            text = "Инструменты. 👁 только читают, ✋ действуют сразу (клики, ввод, запуск приложений), " +
+                "⚠ перед выполнением пришлют уведомление с кнопками «Да / Нет». " +
+                "Включено по умолчанию только нужное для управления экраном."
             textSize = 13f
             setPadding(0, dp(8), 0, dp(4))
             alpha = 0.8f
@@ -207,7 +220,7 @@ class SettingsActivity : AppCompatActivity() {
                 "Описания займут ≈ ${McpManager.tokenCost(this@SettingsActivity)} токенов контекста."
         }
         for (r in recs) {
-            val tag = when (r.readOnly) { true -> "👁 чтение"; false -> "⚠ изменяет"; null -> "? не указано" }
+            val tag = when (r.risk) { "read" -> "👁 чтение"; "act" -> "✋ действие"; else -> "⚠ спросит разрешение" }
             box.addView(CheckBox(this).apply {
                 text = "${r.server} · ${r.name}  [$tag]\n${r.description.take(100)}"
                 textSize = 13f

@@ -26,9 +26,7 @@ object CrashLog {
         if (f.exists()) {
             val text = runCatching { f.readText() }.getOrDefault("")
             f.delete()
-            if (text.isNotBlank()) {
-                Chat.note("💥 Приложение упало:\n" + text.take(6000))
-            }
+            if (text.isNotBlank()) Chat.note("💥 Приложение упало:\n" + text.take(6000))
             return
         }
         if (Build.VERSION.SDK_INT < 30) return
@@ -49,17 +47,53 @@ object CrashLog {
 
             val sb = StringBuilder("💥 Процесс завершён: ${reasonName(last.reason)}")
             last.description?.let { sb.append("\n").append(it) }
+
+            // Нативный сбой: в трассе строки с именами библиотек, функций, сигналом
             if (last.reason == ApplicationExitInfo.REASON_CRASH_NATIVE) {
-                val trace = runCatching { last.traceInputStream?.bufferedReader()?.readText() }
-                    .getOrNull().orEmpty()
-                val keep = trace.lines().filter {
-                    it.startsWith("signal") || it.contains("Abort message") || it.trim().startsWith("#")
-                }.take(14)
-                if (keep.isNotEmpty()) sb.append("\n").append(keep.joinToString("\n"))
+                val bytes = runCatching { last.traceInputStream?.readBytes() }.getOrNull()
+                if (bytes != null) {
+                    val keys = listOf("signal", "SIG", "Abort", "abort", "lib", ".so", "litert", "LiteRT",
+                        "tflite", "gemma", "Gemma", "fault", "Check failed", "FATAL")
+                    val lines = asciiRuns(bytes).filter { r -> keys.any { r.contains(it) } }
+                        .distinct().take(30).map { it.take(150) }
+                    if (lines.isNotEmpty()) sb.append("\n\nТрасса (строки из дампа):\n").append(lines.joinToString("\n"))
+                }
             }
-            Chat.note(sb.toString().take(1800))
+            Chat.note(sb.toString().take(3500))
+
+            // Логи самого приложения перед падением (читаются в отдельном потоке)
+            Thread {
+                val tail = logcatTail()
+                if (tail.isNotBlank()) Chat.note("📜 Логи перед падением:\n$tail")
+            }.start()
         } catch (_: Throwable) {
         }
+    }
+
+    private fun asciiRuns(b: ByteArray, min: Int = 8): List<String> {
+        val out = ArrayList<String>()
+        val sb = StringBuilder()
+        for (x in b) {
+            val c = x.toInt() and 0xFF
+            if (c in 32..126) sb.append(c.toChar())
+            else {
+                if (sb.length >= min) out += sb.toString()
+                sb.setLength(0)
+            }
+        }
+        if (sb.length >= min) out += sb.toString()
+        return out
+    }
+
+    private fun logcatTail(): String = try {
+        val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "3000"))
+        val lines = p.inputStream.bufferedReader().readLines()
+        lines.filter { l ->
+            l.contains(" E/") || l.contains(" F/") || l.contains("Fatal") ||
+                l.contains("litert", true) || l.contains("tflite", true) || l.contains("abort", true)
+        }.takeLast(25).joinToString("\n") { it.take(180) }.take(3500)
+    } catch (_: Throwable) {
+        ""
     }
 
     private fun reasonName(r: Int) = when (r) {

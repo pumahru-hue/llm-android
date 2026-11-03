@@ -25,6 +25,7 @@ class AgentTool(
     val params: JSONObject,
     val source: String,
     private val showResult: Boolean = false,
+    private val confirm: Boolean = false,
     private val handler: (JSONObject) -> String,
 ) : OpenApiTool {
 
@@ -34,6 +35,9 @@ class AgentTool(
     override fun execute(paramsJsonString: String): String {
         val args = try { JSONObject(paramsJsonString.ifBlank { "{}" }) } catch (_: Throwable) { JSONObject() }
         note("🔧 $name ${args.toString().take(140)}")
+        if (confirm && !Confirm.ask(name, source, args.toString().take(400))) {
+            return Tools.err("пользователь отклонил действие или не ответил вовремя")
+        }
         val out = try { handler(args) } catch (t: Throwable) { Tools.err(t.message ?: t.toString()) }
         if (showResult) note("↳ ${out.take(200)}")
         return out

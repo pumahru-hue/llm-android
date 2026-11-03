@@ -1,13 +1,18 @@
 package com.example.agent
 
+import android.content.Context
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URL
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -20,16 +25,24 @@ import java.util.concurrent.atomic.AtomicInteger
  *  2) STATEFUL — редакции 2025-03-26 … 2025-11-25: initialize, заголовок Mcp-Session-Id;
  *  3) SSE      — устаревший HTTP+SSE (2024-11-05): GET-поток «endpoint» + POST-сообщения.
  */
-class McpClient(val name: String, private val url: String, private val headers: Map<String, String>) {
+class McpClient(
+    val name: String,
+    private val url: String,
+    private val headers: Map<String, String>,
+    private val appCtx: Context,
+) {
 
     class ToolInfo(
         val name: String,
         val description: String,
         val schema: JSONObject,
         val readOnly: Boolean?,
+        val risk: String? = null,
+        val defaultOn: Boolean? = null,
+        val media: String? = null,
     )
 
-    private enum class Mode { NONE, MODERN, STATEFUL, SSE }
+    private enum class Mode { NONE, MODERN, STATEFUL, SSE, AGENT }
     private class Resp(val code: Int, val text: String, val session: String?)
 
     private var mode = Mode.NONE
@@ -45,6 +58,7 @@ class McpClient(val name: String, private val url: String, private val headers: 
             Mode.MODERN -> "протокол $MODERN"
             Mode.STATEFUL -> "протокол $version"
             Mode.SSE -> "протокол 2024-11-05 (HTTP+SSE)"
+            Mode.AGENT -> "Android-агент (REST)"
             Mode.NONE -> "?"
         }
 
@@ -53,6 +67,7 @@ class McpClient(val name: String, private val url: String, private val headers: 
     @Synchronized
     fun listTools(): List<ToolInfo> {
         ensure()
+        if (mode == Mode.AGENT) return agentTools()
         val out = ArrayList<ToolInfo>()
         var cursor: String? = null
         var pages = 0
@@ -81,6 +96,7 @@ class McpClient(val name: String, private val url: String, private val headers: 
     @Synchronized
     fun callTool(tool: String, args: JSONObject, schema: JSONObject?): String {
         ensure()
+        if (mode == Mode.AGENT) return agentCall(tool, args)
         val params = JSONObject().put("name", tool).put("arguments", args)
         val res = call("tools/call", params, tool, schema, args)
         val sb = StringBuilder()
@@ -123,6 +139,9 @@ class McpClient(val name: String, private val url: String, private val headers: 
     private fun info() = JSONObject().put("name", "AgentPhone").put("version", "0.3")
 
     private fun detect() {
+        // 0) Android-агент (REST, «инструмент = маршрут»), он же отвечает на /ping
+        if (agentProbe()) { mode = Mode.AGENT; return }
+
         // 1) современный вариант без сессий
         val id = ids.getAndIncrement()
         val body = JSONObject().put("jsonrpc", "2.0").put("id", id).put("method", "tools/list")
@@ -210,6 +229,7 @@ class McpClient(val name: String, private val url: String, private val headers: 
         Mode.MODERN -> modernCall(method, params, toolName, schema, args)
         Mode.STATEFUL -> statefulCall(method, params, true)
         Mode.SSE -> link?.request(method, params, false) ?: throw IOException("поток SSE не открыт")
+        Mode.AGENT -> throw IOException("режим агента: вызов идёт напрямую")
         Mode.NONE -> throw IOException("соединение не установлено")
     }
 
@@ -361,6 +381,154 @@ class McpClient(val name: String, private val url: String, private val headers: 
         } catch (_: Throwable) {
             null
         }
+    }
+
+
+    // ---------- Android-агент (REST: «инструмент = маршрут») ----------
+
+    private fun agentProbe(): Boolean {
+        if (!url.startsWith("http://")) return false
+        return try {
+            val (code, text) = rawHttp("GET", "/ping", null)
+            diag.append("агент /ping: HTTP $code ${text.take(80).replace('\n', ' ')}; ")
+            code == 200 && JSONObject(text).optBoolean("ok", false)
+        } catch (e: Throwable) {
+            diag.append("агент /ping: ${e.javaClass.simpleName}; ")
+            false
+        }
+    }
+
+    private fun agentTools(): List<ToolInfo> {
+        // токен проверяем защищённым запросом: /ping открыт для всех
+        val (code, _) = rawHttp("GET", "/status", null)
+        if (code == 401 || code == 403) throw IOException("HTTP $code: неверный токен агента (X-Auth-Token в headers)")
+        return AgentCatalog.all(appCtx).values.map {
+            ToolInfo(it.name, it.description, it.schema, it.risk == "read", it.risk, it.defaultOn, it.media)
+        }
+    }
+
+    private fun agentCall(tool: String, args: JSONObject): String {
+        val e = AgentCatalog.all(appCtx)[tool] ?: throw IOException("неизвестный инструмент агента: $tool")
+        if (tool == "android_ui_dump") {            // экономим контекст модели
+            if (!args.has("only_clickable")) args.put("only_clickable", true)
+            if (!args.has("limit")) args.put("limit", 40)
+        }
+        val body = if (args.length() > 0) args.toString() else null
+        val (code, text) = rawHttp(e.method, e.path, body)
+        if (code >= 400) return "Ошибка агента (HTTP $code): ${text.take(500)}"
+        return if (tool == "android_ui_dump") compactDump(text) else text
+    }
+
+    /** Дамп экрана -> короткий список «текст + координаты», чтобы он влез в окно маленькой модели. */
+    private fun compactDump(text: String): String {
+        return try {
+            val root = JSONObject(text)
+            var arr: JSONArray? = null
+            for (k in root.keys()) {
+                val v = root.opt(k)
+                if (v is JSONArray) { arr = v; break }
+            }
+            if (arr == null) return text
+            val sb = StringBuilder("Элементы экрана (текст и координаты центра cx,cy):\n")
+            var n = 0
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val label = listOf("text", "desc", "description", "content_desc", "contentDescription",
+                    "hint", "label", "id").map { o.optString(it, "") }.firstOrNull { it.isNotBlank() } ?: ""
+                val hasXY = o.has("cx") && o.has("cy")
+                if (label.isBlank() && !hasXY) continue
+                n++
+                sb.append(n).append(". ")
+                if (label.isNotBlank()) sb.append('«').append(label.take(60)).append("» ")
+                if (hasXY) sb.append('(').append(o.optInt("cx")).append(',').append(o.optInt("cy")).append(')')
+                if (o.optBoolean("clickable", false)) sb.append(" [нажимаемый]")
+                if (o.optBoolean("editable", false)) sb.append(" [поле ввода]")
+                sb.append('\n')
+                if (sb.length > 2800) { sb.append("…\n"); break }
+            }
+            if (n == 0) text else sb.toString()
+        } catch (_: Throwable) {
+            text
+        }
+    }
+
+    /** Свой HTTP/1.1 поверх сокета: агенту нужно тело и у GET-запросов, а HttpURLConnection так не умеет. */
+    private fun rawHttp(method: String, pathIn: String, body: String?): Pair<Int, String> {
+        val u = URL(url)
+        val port = if (u.port > 0) u.port else 80
+        val path = u.path.trimEnd('/') + pathIn
+        return Socket().use { s ->
+            s.connect(InetSocketAddress(u.host, port), 8000)
+            s.soTimeout = 30_000
+            val b = body?.toByteArray(Charsets.UTF_8)
+            val req = StringBuilder()
+            req.append(method).append(' ').append(path).append(" HTTP/1.1\r\n")
+            req.append("Host: ").append(u.host).append(':').append(port).append("\r\n")
+            req.append("Connection: close\r\nAccept: application/json\r\n")
+            if (b != null) req.append("Content-Type: application/json\r\nContent-Length: ").append(b.size).append("\r\n")
+            headers.forEach { (k, v) -> req.append(k).append(": ").append(v).append("\r\n") }
+            req.append("\r\n")
+            val out = s.getOutputStream()
+            out.write(req.toString().toByteArray(Charsets.UTF_8))
+            if (b != null) out.write(b)
+            out.flush()
+            readHttp(BufferedInputStream(s.getInputStream()))
+        }
+    }
+
+    private fun readHttp(inp: BufferedInputStream): Pair<Int, String> {
+        fun line(): String? {
+            val bo = ByteArrayOutputStream()
+            while (true) {
+                val c = inp.read()
+                if (c < 0) return if (bo.size() == 0) null else bo.toString("UTF-8")
+                if (c == '\n'.code) break
+                bo.write(c)
+            }
+            return bo.toString("UTF-8").trimEnd('\r')
+        }
+        val status = line() ?: throw IOException("пустой ответ агента")
+        val code = status.split(' ').getOrNull(1)?.toIntOrNull() ?: throw IOException("плохой ответ агента: $status")
+        val h = HashMap<String, String>()
+        while (true) {
+            val l = line() ?: break
+            if (l.isEmpty()) break
+            val i = l.indexOf(':')
+            if (i > 0) h[l.substring(0, i).trim().lowercase()] = l.substring(i + 1).trim()
+        }
+        val bytes = ByteArrayOutputStream()
+        val buf = ByteArray(8192)
+        val chunked = h["transfer-encoding"].orEmpty().lowercase().contains("chunked")
+        val cl = h["content-length"]?.toIntOrNull()
+        if (chunked) {
+            while (true) {
+                val sz = (line() ?: break).substringBefore(';').trim().toIntOrNull(16) ?: break
+                if (sz == 0) break
+                var left = sz
+                while (left > 0) {
+                    val n = inp.read(buf, 0, minOf(buf.size, left))
+                    if (n < 0) break
+                    bytes.write(buf, 0, n)
+                    left -= n
+                }
+                line()
+            }
+        } else if (cl != null) {
+            var left = cl
+            while (left > 0) {
+                val n = inp.read(buf, 0, minOf(buf.size, left))
+                if (n < 0) break
+                bytes.write(buf, 0, n)
+                left -= n
+            }
+        } else {
+            while (true) {
+                val n = inp.read(buf)
+                if (n < 0) break
+                bytes.write(buf, 0, n)
+            }
+        }
+        return code to bytes.toString("UTF-8")
     }
 
     // ---------- устаревший HTTP+SSE ----------
