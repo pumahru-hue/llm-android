@@ -26,28 +26,57 @@ class ModelHost(private val ctx: Context) {
 
     val isReady get() = engine != null
 
+    /**
+     * Загружает движок с максимально возможным окном. Если памяти не хватает, пробует вдвое меньше
+     * (вплоть до 4096). Если процесс убило прямо во время загрузки, при следующем запуске
+     * начинает с половины прошлой попытки.
+     */
     suspend fun init(): String = mutex.withLock {
         if (engine != null) return@withLock "уже загружена"
         require(modelFile.exists()) { "Нет файла модели: ${modelFile.path}" }
 
-        withContext(Dispatchers.Default) {
-            val e = try {
-                build(Backend.GPU()).also { it.initialize() }
+        val sp = ctx.getSharedPreferences("agent", Context.MODE_PRIVATE)
+        val wanted = Settings.engineWindow(ctx)
+        val interrupted = sp.getInt("win_trying", 0)
+        val start = if (interrupted in 1..wanted) maxOf(interrupted / 2, 4096) else wanted
+        val ladder = generateSequence(start) { if (it > 4096) maxOf(it / 2, 4096) else null }.toList()
+
+        var lastErr: Throwable? = null
+        for (w in ladder) {
+            sp.edit().putInt("win_trying", w).apply()
+            try {
+                val e = withContext(Dispatchers.Default) { initEngine(w) }
+                engine = e
+                AgentRuntime.window = w
+                sp.edit().putInt("win_trying", 0).apply()
+                return@withLock "готово (окно $w ток.)"
             } catch (t: Throwable) {
-                Log.w(TAG, "GPU не взлетел, CPU: $t")
-                build(Backend.CPU()).also { it.initialize() }
+                lastErr = t
+                Log.w(TAG, "окно $w не взлетело: $t")
             }
-            engine = e
         }
-        "готово"
+        sp.edit().putInt("win_trying", 0).apply()
+        throw lastErr ?: IllegalStateException("не удалось загрузить модель")
     }
 
-    private fun build(main: Backend) = Engine(
+    private fun initEngine(window: Int): Engine {
+        return try {
+            val e = build(Backend.GPU(), window)
+            try { e.initialize(); e } catch (t: Throwable) { runCatching { e.close() }; throw t }
+        } catch (t: Throwable) {
+            Log.w(TAG, "GPU не взлетел, CPU: $t")
+            val e = build(Backend.CPU(), window)
+            try { e.initialize(); e } catch (t2: Throwable) { runCatching { e.close() }; throw t2 }
+        }
+    }
+
+    private fun build(main: Backend, window: Int) = Engine(
         EngineConfig(
             modelPath = modelFile.path,
             backend = main,
             visionBackend = Backend.GPU(),
             audioBackend = Backend.CPU(),
+            maxNumTokens = window,
             cacheDir = ctx.cacheDir.path,
         )
     )
@@ -105,6 +134,7 @@ class ModelHost(private val ctx: Context) {
         runCatching { conversation?.close() }
         runCatching { engine?.close() }
         conversation = null; engine = null
+        liveIds = emptyList()
     }
 
     companion object { const val TAG = "ModelHost" }
@@ -113,6 +143,9 @@ class ModelHost(private val ctx: Context) {
 object AgentRuntime {
     @Volatile private var host: ModelHost? = null
 
+    /** Реальное окно загруженного движка, токенов (0 — ещё не загружен). */
+    @Volatile var window = 0
+
     fun host(ctx: Context): ModelHost =
         host ?: synchronized(this) { host ?: ModelHost(ctx.applicationContext).also { host = it } }
 
@@ -120,5 +153,19 @@ object AgentRuntime {
     fun invalidate(ctx: Context) {
         val app = ctx.applicationContext
         CoroutineScope(Dispatchers.Default).launch { host(app).dropConversation() }
+    }
+
+    /** Выгружает модель и загружает заново (например, после смены окна). */
+    fun reload(ctx: Context) {
+        val app = ctx.applicationContext
+        CoroutineScope(Dispatchers.Default).launch {
+            val h = host(app)
+            DownloadState.text.value = "Перезагружаю модель…"
+            h.close()
+            window = 0
+            val msg = runCatching { h.init() }.getOrElse { "ошибка: ${it.message}" }
+            DownloadState.text.value = "Модель: $msg"
+            Notifs.model = "Модель: $msg"
+        }
     }
 }

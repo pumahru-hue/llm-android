@@ -14,7 +14,7 @@ object McpManager {
     const val KEY_JSON = "mcp_json"
     private const val KEY_SNAP = "mcp_snapshot"
     private const val KEY_ENABLED = "mcp_enabled"
-    const val MAX_TOOLS = 12
+    const val MAX_TOOLS = 80
 
     val EXAMPLE = """{
   "mcpServers": {
@@ -109,6 +109,13 @@ object McpManager {
         try { JSONObject(Settings.str(ctx, KEY_ENABLED, "{}")) } catch (_: Throwable) { JSONObject() }
 
     fun isEnabled(ctx: Context, r: ToolRec): Boolean = enabledMap(ctx).optBoolean(r.key, r.defaultOn)
+
+    /** Включить или выключить сразу все (on = null — вернуть значения по умолчанию). */
+    fun setAll(ctx: Context, recs: List<ToolRec>, on: Boolean?) {
+        val m = JSONObject()
+        if (on != null) for (r in recs) m.put(r.key, on)
+        Settings.put(ctx, KEY_ENABLED, m.toString())
+    }
 
     fun setEnabled(ctx: Context, r: ToolRec, on: Boolean) {
         Settings.put(ctx, KEY_ENABLED, enabledMap(ctx).put(r.key, on).toString())

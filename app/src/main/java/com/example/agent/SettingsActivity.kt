@@ -7,6 +7,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -132,7 +133,18 @@ class SettingsActivity : AppCompatActivity() {
     private fun pageContext() {
         hint("Чат склеенный: модель помнит всё, что в контексте (текст, картинки, кадры видео, расшифровки голоса). " +
             "Контекст чистится только кнопкой «очистить чат» или при превышении лимита.")
-        edit("Лимит контекста, токенов (оценка)", Settings.CTX_BUDGET, "3500", number = true)
+        edit("Окно модели при загрузке, токенов (применяется после перезагрузки модели)",
+            Settings.ENGINE_WINDOW, Settings.recommendedWindow(this).toString(), number = true)
+        hint("Память телефона: ${Settings.totalRamMb(this)} МБ, рекомендуемое окно: " +
+            "${Settings.recommendedWindow(this)} ток. Сейчас загружено: ${AgentRuntime.window} ток. " +
+            "Можно вписать и больше (до 131072): если памяти не хватит, приложение само попробует вдвое " +
+            "меньше, но при нехватке памяти система может пару раз закрыть приложение, пока оно подберёт " +
+            "окно. Чем больше окно, тем дольше загрузка и долгая первая обработка.")
+        button("Перезагрузить модель (применить окно)") {
+            AgentRuntime.reload(this)
+            Toast.makeText(this, "Перезагружаю, смотрите статус на главном экране", Toast.LENGTH_LONG).show()
+        }
+        edit("Лимит контекста для сжатия, токенов (оценка)", Settings.CTX_BUDGET, "120000", number = true)
         hint("Реальный размер окна зависит от сборки модели и неизвестен. Если появляются ошибки «Task failed», " +
             "уменьшите лимит. Приложение при ошибке само сожмёт контекст сильнее и повторит запрос.")
         hint("Что убирать при превышении:")
@@ -213,6 +225,26 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(0, dp(8), 0, dp(4))
             alpha = 0.8f
         })
+        val bulk = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        bulk.addView(Button(this).apply {
+            text = "Включить все"
+            isAllCaps = false
+            setOnClickListener {
+                McpManager.setAll(this@SettingsActivity, recs, true)
+                AgentRuntime.invalidate(this@SettingsActivity)
+                renderMcpTools(box)
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bulk.addView(Button(this).apply {
+            text = "По умолчанию"
+            isAllCaps = false
+            setOnClickListener {
+                McpManager.setAll(this@SettingsActivity, recs, null)
+                AgentRuntime.invalidate(this@SettingsActivity)
+                renderMcpTools(box)
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        box.addView(bulk)
         val footer = TextView(this).apply { textSize = 13f; setPadding(0, dp(8), 0, 0) }
         fun updateFooter() {
             val n = McpManager.tools(this@SettingsActivity).size

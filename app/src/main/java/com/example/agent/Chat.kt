@@ -120,7 +120,11 @@ object ChatStore {
 object Tokens {
     private val CTX_ROLES = setOf("user", "assistant", "event")
 
-    fun overhead(ctx: Context) = Settings.effectivePrompt(ctx).length / 3 + 900   // промпт + схемы инструментов
+    /** Промпт + описания всех включённых инструментов. */
+    fun overhead(ctx: Context): Int =
+        Settings.effectivePrompt(ctx).length / 3 +
+            (if (Settings.toolsOn(ctx)) 900 else 100) +
+            McpManager.tokenCost(ctx)
 
     fun of(ctx: Context, m: ChatMsg): Int {
         if (m.role !in CTX_ROLES) return 0
@@ -234,7 +238,7 @@ object Chat {
                             val msg = e.message ?: e.toString()
                             val tip = if (msg.contains("embedding buffer") || msg.contains("state entries"))
                                 "\nСообщение (картинки, звук) не помещается в окно модели: уменьшите картинки, " +
-                                    "снизьте лимит контекста в настройках или очистите чат."
+                                    "увеличьте окно в настройках (Контекст чата) или очистите чат."
                             else ""
                             note("⚠ Ошибка модели: $msg$tip")
                             throw e
